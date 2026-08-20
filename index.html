@@ -136,13 +136,15 @@
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <div class="hint" style="margin-top:0;"><span style="color:#2dd4bf;">●</span> накопление &nbsp; <span style="color:#60a5fa;">●</span> пенсия (снятие)</div>
         <div>
+          <button class="zbtn" id="pLeft" title="Сдвинуть влево">◀</button>
+          <button class="zbtn" id="pRight" title="Сдвинуть вправо">▶</button>
           <button class="zbtn" id="zOut" title="Отдалить">−</button>
           <button class="zbtn" id="zIn" title="Приблизить">+</button>
           <button class="zbtn" id="zReset" title="Сбросить масштаб">⟲</button>
         </div>
       </div>
       <canvas id="chart" style="width:100%; height:320px; display:block; cursor:crosshair;"></canvas>
-      <div class="hint" id="chartInfo" style="margin-top:10px;">Наведите курсор — точка и скорость роста · потяните мышью — статистика за период · колесо — масштаб · двойной клик — сброс.</div>
+      <div class="hint" id="chartInfo" style="margin-top:10px;">Курсор — точка и скорость роста · тянуть мышью — статистика за период · колесо — масштаб · Shift+мышь / ◀ ▶ — двигать график · двойной клик — сброс.</div>
     </div>
   </div>
 </div>
@@ -459,7 +461,7 @@ function drawChart(){
 function updateInfo(){
   const st=chartState, D=st.data, el=$('chartInfo');
   if(!D) return;
-  const dflt='Наведите курсор — точка и скорость роста · потяните мышью — статистика за период · колесо — масштаб · двойной клик — сброс.';
+  const dflt='Курсор — точка и скорость роста · тянуть мышью — статистика за период · колесо — масштаб · Shift+мышь / ◀ ▶ — двигать график · двойной клик — сброс.';
   if(st.sel && st.sel[1]-st.sel[0]>1){
     const [i,j]=st.sel;
     const yrs=(D.ages[j]-D.ages[i]);
@@ -500,7 +502,25 @@ function updateInfo(){
     const i=Math.round((age-D.ages[0])*12);
     return Math.max(0,Math.min(D.vals.length-1,i));
   }
+  function shiftView(df){ // сдвиг видимого окна на df (доля всего диапазона)
+    const v=chartState.view, span=v.b-v.a;
+    let a=v.a+df, b=v.b+df;
+    if(a<0){a=0;b=span;}
+    if(b>1){b=1;a=1-span;}
+    chartState.view={a,b};
+    drawChart(); updateInfo();
+  }
   cv.addEventListener('mousemove',e=>{
+    if(chartState.pan){
+      const st=chartState;
+      const df=-(e.clientX-st.pan.x)/st._m.pw*(st.pan.b-st.pan.a);
+      const span=st.pan.b-st.pan.a;
+      let a=st.pan.a+df, b=st.pan.b+df;
+      if(a<0){a=0;b=span;} if(b>1){b=1;a=1-span;}
+      st.view={a,b};
+      drawChart(); updateInfo();
+      return;
+    }
     const i=idxAt(e.clientX);
     if(chartState.drag!=null && i!=null){
       chartState.sel=[Math.min(chartState.drag,i),Math.max(chartState.drag,i)];
@@ -509,16 +529,23 @@ function updateInfo(){
     drawChart(); updateInfo();
   });
   cv.addEventListener('mouseleave',()=>{
-    chartState.hover=null; chartState.drag=null;
+    chartState.hover=null; chartState.drag=null; chartState.pan=null;
     drawChart(); updateInfo();
   });
   cv.addEventListener('mousedown',e=>{
+    if(e.shiftKey || e.button===1){
+      e.preventDefault();
+      chartState.pan={x:e.clientX, a:chartState.view.a, b:chartState.view.b};
+      cv.style.cursor='grabbing';
+      return;
+    }
     chartState.drag=idxAt(e.clientX);
     chartState.sel=null;
   });
   window.addEventListener('mouseup',()=>{
     if(chartState.sel && chartState.sel[1]-chartState.sel[0]<2) chartState.sel=null;
-    chartState.drag=null;
+    chartState.drag=null; chartState.pan=null;
+    cv.style.cursor='crosshair';
     drawChart(); updateInfo();
   });
   function zoom(factor, centerFrac){
@@ -535,6 +562,11 @@ function updateInfo(){
   cv.addEventListener('wheel',e=>{
     e.preventDefault();
     const st=chartState; if(!st._m) return;
+    if(e.shiftKey){ // Shift+колесо — прокрутка
+      const span=st.view.b-st.view.a;
+      shiftView((e.deltaY>0?1:-1)*span*0.15);
+      return;
+    }
     const r=cv.getBoundingClientRect();
     const frac=Math.max(0,Math.min(1,(e.clientX-r.left-st._m.padL)/st._m.pw));
     zoom(e.deltaY>0?1.3:0.75, frac);
@@ -545,6 +577,8 @@ function updateInfo(){
   });
   $('zIn').onclick=()=>zoom(0.7);
   $('zOut').onclick=()=>zoom(1.4);
+  $('pLeft').onclick=()=>shiftView(-(chartState.view.b-chartState.view.a)*0.25);
+  $('pRight').onclick=()=>shiftView((chartState.view.b-chartState.view.a)*0.25);
   $('zReset').onclick=()=>{chartState.view={a:0,b:1}; chartState.sel=null; drawChart(); updateInfo();};
 })();
 window.addEventListener('resize',()=>{drawChart();});
