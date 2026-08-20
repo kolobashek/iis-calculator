@@ -257,7 +257,8 @@ function render(){
   const startCap=+$('startCap').value||0;
   const precise=$('precise').checked;
   $('fPrecise').style.display=precise?'':'none';
-  let ageStart=ageNow, monthsAcc=Math.max(ageRet-ageNow,0)*12, startMonthIdx=0, startDateObj=null;
+  let ageStart=ageNow, monthsAcc=Math.max(ageRet-ageNow,0)*12, startDateObj=new Date();
+  let startMonthIdx=startDateObj.getMonth();
   if(precise){
     const bd=new Date($('birthDate').value), sd=new Date($('startDate').value);
     if(!isNaN(bd)&&!isNaN(sd)){
@@ -434,7 +435,7 @@ function drawChart(){
     let xTxt=fmtAge(D.ages[st.hover]);
     if(D.startDate){
       const d=new Date(D.startDate); d.setMonth(d.getMonth()+st.hover);
-      xTxt=d.toLocaleDateString('ru-RU',{month:'short',year:'numeric'}).replace(' г.','')+' · '+xTxt;
+      xTxt=d.toLocaleDateString('ru-RU',{month:'short',year:'numeric'}).replace(' г.','');
     }
     function badge(text,cx,cy,anchorRight){
       ctx.font='11px Segoe UI, sans-serif';
