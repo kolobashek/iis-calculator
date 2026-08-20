@@ -59,6 +59,10 @@
         <input type="range" id="ageRet" min="30" max="75" value="50">
       </div>
       <div class="field">
+        <label>Стартовый капитал, ₽</label>
+        <input type="number" id="startCap" value="0" step="10000" min="0">
+      </div>
+      <div class="field">
         <label>Взнос в месяц, ₽</label>
         <input type="number" id="monthly" value="17000" step="1000" min="0">
       </div>
@@ -140,10 +144,10 @@ let mode='A';
 function monthlyRate(annual){ return Math.pow(1+annual,1/12)-1; }
 
 // Фаза накопления: помесячно, вычет за прошлый год падает в январе
-function accumulate(years, monthly, annual, taxRate, reinvest){
+function accumulate(years, monthly, annual, taxRate, reinvest, startCap){
   const m=monthlyRate(annual);
-  let bal=0, contrib=0, refunds=0;
-  const series=[0];
+  let bal=startCap||0, contrib=0, refunds=0;
+  const series=[bal];
   const capBase=Math.min(monthly*12, 400000);
   for(let y=0;y<years;y++){
     if(y>0 && reinvest && taxRate>0){
@@ -222,14 +226,15 @@ function render(){
   $('fWorkAge').style.display=workOn?'':'none';
   $('workHint').style.display=workOn?'':'none';
 
+  const startCap=+$('startCap').value||0;
   const years=Math.max(ageRet-ageNow,0);
-  const acc=accumulate(years, monthly, ret, taxRate, reinvest);
+  const acc=accumulate(years, monthly, ret, taxRate, reinvest, startCap);
 
   const res=[];
   res.push({lbl:'Накоплено к '+ageRet+' годам', val:fmtM(acc.bal), cls:'big'});
-  res.push({lbl:'Свои взносы за '+years+' лет', val:fmtM(acc.contrib)});
+  res.push({lbl:'Свои взносы за '+years+' лет'+(startCap>0?' + старт':''), val:fmtM(acc.contrib+startCap)});
   res.push({lbl:'Реинвестировано вычетов', val:fmtM(acc.refunds)});
-  res.push({lbl:'Доход от инвестиций', val:fmtM(acc.bal-acc.contrib-acc.refunds), cls:'ok'});
+  res.push({lbl:'Доход от инвестиций', val:fmtM(acc.bal-acc.contrib-acc.refunds-startCap), cls:'ok'});
 
   const effTax=reinvest?taxRate:0;
   const workMonths=workOn?Math.max(workAge-ageRet,0)*12:0;
@@ -351,7 +356,7 @@ $('mA').onclick=()=>setMode('A');
 $('mB').onclick=()=>setMode('B');
 $('mC').onclick=()=>setMode('C');
 
-['ageNow','ageRet','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge'].forEach(id=>{
+['ageNow','ageRet','startCap','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge'].forEach(id=>{
   $(id).addEventListener('input',render);
 });
 // возраст обнуления и «работаю до» не могут быть раньше пенсии
