@@ -97,6 +97,12 @@
         <label>Доходность на пенсии, % годовых <b id="retPV"></b></label>
         <input type="range" id="retP" min="1" max="20" value="8" step="0.5">
       </div>
+      <label class="toggle" style="margin-bottom:10px;"><input type="checkbox" id="workOn"> Продолжаю работать на пенсии</label>
+      <div class="field" id="fWorkAge" style="display:none;">
+        <label>Работаю до <b id="workAgeV"></b></label>
+        <input type="range" id="workAge" min="51" max="80" value="60">
+      </div>
+      <div class="hint" id="workHint" style="display:none;">Пока работаете: взносы и налоговые вычеты продолжают поступать на счёт параллельно со снятиями.</div>
       <div class="hint">На пенсии обычно уходят в более консервативный портфель — доходность ниже.</div>
     </div>
   </div>
@@ -153,42 +159,47 @@ function accumulate(years, monthly, annual, taxRate, reinvest){
   return {bal, contrib, refunds, series};
 }
 
-// Режим A: сколько месяцев протянет при снятии W/мес
-function drawdown(bal, W, annual, maxMonths){
+// Универсальный симулятор пенсии (помесячно).
+// workMonths — сколько месяцев ещё работаем: идут взносы и годовые вычеты.
+// lastRefund — вычет за последний год накоплений, приходит в 1-й месяц пенсии.
+function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths, lastRefund){
   const m=monthlyRate(annual);
+  let b=bal, zeroAt=-1, balAtWorkEnd=bal;
   const series=[bal];
-  let months=0;
-  let b=bal;
-  while(b>0 && months<maxMonths){
-    b=b*(1+m)-W;
-    months++;
-    if(months%12===0) series.push(Math.max(b,0));
+  const refund=Math.min(monthly*12,400000)*taxRate;
+  for(let i=1;i<=horizonMonths;i++){
+    if(zeroAt<0){
+      if(i===1) b+=lastRefund;                       // вычет за последний год накоплений
+      if(i>12 && (i-1)%12===0 && i-1<=workMonths) b+=refund; // вычеты за годы работы на пенсии
+      b=b*(1+m)+(i<=workMonths?monthly:0)-W;
+      if(b<=0){zeroAt=i; b=0;}
+    }
+    if(i===workMonths) balAtWorkEnd=b;
+    if(i%12===0||i===horizonMonths) series.push(b);
   }
-  if(months%12!==0) series.push(Math.max(b,0));
-  return {months, series, exhausted:b<=0};
+  return {end:b, series, zeroAt, balAtWorkEnd};
 }
 
-// Режим B: вечная рента = проценты за месяц
-function perpetual(bal, annual){
-  return bal*monthlyRate(annual);
-}
-
-// Режим C: аннуитет — обнулить за n месяцев
-function annuity(bal, annual, nMonths){
-  const m=monthlyRate(annual);
-  if(nMonths<=0) return Infinity;
-  if(m===0) return bal/nMonths;
-  return bal*m/(1-Math.pow(1+m,-nMonths));
-}
-
-function annuitySeries(bal, W, annual, nMonths){
-  const m=monthlyRate(annual);
-  const series=[bal]; let b=bal;
-  for(let i=1;i<=nMonths;i++){
-    b=b*(1+m)-W;
-    if(i%12===0||i===nMonths) series.push(Math.max(b,0));
+// Максимальное W, при котором капитал не тает (двоичный поиск)
+function solvePerpetual(bal, annual, monthly, taxRate, workMonths, horizonMonths, lastRefund){
+  let lo=0, hi=bal*(monthlyRate(annual)+0.02)+monthly+200000;
+  for(let k=0;k<60;k++){
+    const mid=(lo+hi)/2;
+    const s=simPension(bal, mid, annual, monthly, taxRate, workMonths, horizonMonths, lastRefund);
+    if(s.zeroAt<0 && s.end>=s.balAtWorkEnd*0.999) lo=mid; else hi=mid;
   }
-  return series;
+  return lo;
+}
+
+// Максимальное W, при котором счёт обнуляется ровно к nMonths
+function solveAnnuity(bal, annual, monthly, taxRate, workMonths, nMonths, lastRefund){
+  let lo=0, hi=bal+monthly*nMonths+1e7;
+  for(let k=0;k<60;k++){
+    const mid=(lo+hi)/2;
+    const s=simPension(bal, mid, annual, monthly, taxRate, Math.min(workMonths,nMonths), nMonths, lastRefund);
+    if(s.zeroAt<0 && s.end>0) lo=mid; else hi=mid;
+  }
+  return lo;
 }
 
 function render(){
@@ -199,12 +210,17 @@ function render(){
   const reinvest=$('reinvest').checked;
   const W=+$('withdraw').value||0;
   const zeroAge=+$('zeroAge').value;
+  const workOn=$('workOn').checked;
+  const workAge=+$('workAge').value;
 
   $('ageNowV').textContent=ageNow+' лет';
   $('ageRetV').textContent=ageRet+' лет';
   $('retV').textContent=$('ret').value+'%';
   $('retPV').textContent=$('retP').value+'%';
   $('zeroAgeV').textContent=zeroAge+' лет';
+  $('workAgeV').textContent=workAge+' лет';
+  $('fWorkAge').style.display=workOn?'':'none';
+  $('workHint').style.display=workOn?'':'none';
 
   const years=Math.max(ageRet-ageNow,0);
   const acc=accumulate(years, monthly, ret, taxRate, reinvest);
@@ -215,38 +231,41 @@ function render(){
   res.push({lbl:'Реинвестировано вычетов', val:fmtM(acc.refunds)});
   res.push({lbl:'Доход от инвестиций', val:fmtM(acc.bal-acc.contrib-acc.refunds), cls:'ok'});
 
-  const perp=perpetual(acc.bal, retP);
+  const effTax=reinvest?taxRate:0;
+  const workMonths=workOn?Math.max(workAge-ageRet,0)*12:0;
+  const pMonthly=workOn?monthly:0; // взносы на пенсии — только если работаем
+  const lastRefund=(reinvest&&years>0)?Math.min(monthly*12,400000)*taxRate:0;
+  const horizon=Math.max((100-ageRet)*12,12);
+  const workTxt=workOn?' (работаю до '+workAge+')':'';
+
+  const perp=solvePerpetual(acc.bal, retP, pMonthly, effTax, workMonths, horizon, lastRefund);
   let summary='';
-  let pensionSeries=[], pensionYears=0;
+  let pensionSeries=[];
 
   if(mode==='A'){
-    const maxMonths=100*12;
-    const dd=drawdown(acc.bal, W, retP, maxMonths);
-    pensionSeries=dd.series;
-    pensionYears=Math.ceil(dd.months/12);
-    if(!dd.exhausted){
-      res.push({lbl:'Снимая '+fmt(W)+'/мес', val:'хватит навсегда', cls:'ok'});
-      summary='Снятие '+fmt(W)+'/мес меньше месячного дохода капитала ('+fmt(perp)+'/мес) — счёт не тает, а растёт.';
+    const s=simPension(acc.bal, W, retP, pMonthly, effTax, workMonths, horizon, lastRefund);
+    pensionSeries=s.series;
+    if(s.zeroAt<0){
+      res.push({lbl:'Снимая '+fmt(W)+'/мес'+workTxt, val:'хватит до 100 лет и дальше', cls:'ok'});
+      summary='Снятие '+fmt(W)+'/мес не истощает счёт — предел «вечной ренты» в этом сценарии '+fmt(perp)+'/мес.';
     }else{
-      const yrs=Math.floor(dd.months/12), mos=dd.months%12;
-      const endAge=ageRet+dd.months/12;
-      res.push({lbl:'Снимая '+fmt(W)+'/мес', val:yrs+' лет '+mos+' мес', cls:dd.months<20*12?'warn':''});
+      const yrs=Math.floor(s.zeroAt/12), mos=s.zeroAt%12;
+      const endAge=ageRet+s.zeroAt/12;
+      res.push({lbl:'Снимая '+fmt(W)+'/мес'+workTxt, val:yrs+' лет '+mos+' мес', cls:s.zeroAt<20*12?'warn':''});
       res.push({lbl:'Деньги закончатся в возрасте', val:'~'+Math.round(endAge)+' лет', cls:endAge<80?'warn':''});
-      summary='Депозит растает за '+yrs+' лет '+mos+' мес. Чтобы остаток не сгорал, снимайте не больше '+fmt(perp)+'/мес — это «вечная рента» при '+$('retP').value+'% годовых.';
+      summary='Депозит растает за '+yrs+' лет '+mos+' мес. Чтобы остаток не сгорал, снимайте не больше '+fmt(perp)+'/мес — это «вечная рента» при '+$('retP').value+'% годовых'+(workOn?' с учётом взносов и вычетов до '+workAge+' лет':'')+'.';
     }
   }else if(mode==='B'){
     res.push({lbl:'Вечная рента (капитал не тает)', val:fmt(perp)+'/мес', cls:'ok'});
-    pensionYears=40;
-    pensionSeries=annuitySeries(acc.bal, perp, retP, pensionYears*12);
-    summary='Снимая ровно проценты — '+fmt(perp)+' в месяц — вы никогда не трогаете тело капитала: '+fmtM(acc.bal)+' остаётся детям/наследникам. Любая сумма выше начнёт «проедать» депозит.';
+    pensionSeries=simPension(acc.bal, perp, retP, pMonthly, effTax, workMonths, 40*12, lastRefund).series;
+    summary='Снимая '+fmt(perp)+' в месяц, вы не трогаете тело капитала — '+fmtM(acc.bal)+' остаётся наследникам. Любая сумма выше начнёт «проедать» депозит.'+(workOn?' Учтены взносы и вычеты, пока вы работаете до '+workAge+' лет.':'');
   }else{
     const nMonths=Math.max((zeroAge-ageRet)*12,1);
-    const W2=annuity(acc.bal, retP, nMonths);
+    const W2=solveAnnuity(acc.bal, retP, pMonthly, effTax, workMonths, nMonths, lastRefund);
     res.push({lbl:'Можно снимать до '+zeroAge+' лет', val:fmt(W2)+'/мес', cls:'ok'});
     res.push({lbl:'Период выплат', val:(zeroAge-ageRet)+' лет'});
-    pensionYears=zeroAge-ageRet;
-    pensionSeries=annuitySeries(acc.bal, W2, retP, nMonths);
-    summary='Аннуитет: снимая '+fmt(W2)+'/мес, вы полностью обнулите счёт ровно к '+zeroAge+' годам. Для сравнения, вечная рента (капитал не тает) — '+fmt(perp)+'/мес.';
+    pensionSeries=simPension(acc.bal, W2, retP, pMonthly, effTax, Math.min(workMonths,nMonths), nMonths, lastRefund).series;
+    summary='Аннуитет: снимая '+fmt(W2)+'/мес, вы обнулите счёт ровно к '+zeroAge+' годам. Для сравнения, вечная рента (капитал не тает) — '+fmt(perp)+'/мес.'+(workOn?' Учтены взносы и вычеты до '+Math.min(workAge,zeroAge)+' лет.':'');
   }
 
   $('results').innerHTML=res.map(r=>
@@ -332,11 +351,15 @@ $('mA').onclick=()=>setMode('A');
 $('mB').onclick=()=>setMode('B');
 $('mC').onclick=()=>setMode('C');
 
-['ageNow','ageRet','monthly','ret','tax','reinvest','withdraw','retP','zeroAge'].forEach(id=>{
+['ageNow','ageRet','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge'].forEach(id=>{
   $(id).addEventListener('input',render);
 });
-// возраст обнуления не может быть раньше пенсии
-$('ageRet').addEventListener('input',()=>{ $('zeroAge').min=+$('ageRet').value+1; });
+// возраст обнуления и «работаю до» не могут быть раньше пенсии
+$('ageRet').addEventListener('input',()=>{
+  $('zeroAge').min=+$('ageRet').value+1;
+  $('workAge').min=+$('ageRet').value+1;
+  if(+$('workAge').value<=+$('ageRet').value) $('workAge').value=+$('ageRet').value+1;
+});
 render();
 </script>
 </body>
