@@ -56,6 +56,18 @@
         <label>Возраст сейчас <b id="ageNowV"></b></label>
         <input type="range" id="ageNow" min="18" max="60" value="35">
       </div>
+      <label class="toggle" style="margin-bottom:12px;"><input type="checkbox" id="precise"> Уточнить: дата рождения и дата взноса</label>
+      <div id="fPrecise" style="display:none;">
+        <div class="field">
+          <label>Дата рождения</label>
+          <input type="date" id="birthDate" value="1991-04-15">
+        </div>
+        <div class="field">
+          <label>Дата первого взноса</label>
+          <input type="date" id="startDate" value="2026-08-20">
+        </div>
+        <div class="hint" style="margin-bottom:12px;">Возраст берётся из даты рождения (ползунок выше игнорируется), взносы стартуют с указанной даты, вычеты приходят в январе за прошлый календарный год.</div>
+      </div>
       <div class="field">
         <label>Возраст выхода «на пенсию» <b id="ageRetV"></b></label>
         <input type="range" id="ageRet" min="30" max="75" value="50">
@@ -153,39 +165,45 @@ let mode='A';
 
 function monthlyRate(annual){ return Math.pow(1+annual,1/12)-1; }
 
-// Фаза накопления: помесячно, вычет за прошлый год падает в январе
-function accumulate(years, monthly, annual, taxRate, reinvest, startCap){
+// Фаза накопления: помесячно; вычет за прошлый календарный год приходит в январе.
+// startMonthIdx — календарный месяц первого взноса (0=январь).
+function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, startCap){
   const m=monthlyRate(annual);
-  let bal=startCap||0, contrib=0, refunds=0;
+  let bal=startCap||0, contrib=0, refunds=0, curYear=0;
   const series=[bal];
-  const capBase=Math.min(monthly*12, 400000);
-  for(let y=0;y<years;y++){
-    if(y>0 && reinvest && taxRate>0){
-      const ref=capBase*taxRate;
-      bal+=ref; refunds+=ref;
+  for(let i=0;i<nMonths;i++){
+    const calMonth=(startMonthIdx+i)%12;
+    if(calMonth===0 && i>0){
+      if(reinvest && taxRate>0){
+        const ref=Math.min(curYear,400000)*taxRate;
+        bal+=ref; refunds+=ref;
+      }
+      curYear=0;
     }
-    for(let i=0;i<12;i++){
-      bal=(bal+monthly)*(1+m);
-      contrib+=monthly;
-      series.push(bal);
-    }
+    bal=(bal+monthly)*(1+m);
+    contrib+=monthly; curYear+=monthly;
+    series.push(bal);
   }
-  return {bal, contrib, refunds, series};
+  return {bal, contrib, refunds, series, carry:curYear};
 }
 
-// Универсальный симулятор пенсии (помесячно).
-// workMonths — сколько месяцев ещё работаем: идут взносы и годовые вычеты.
-// lastRefund — вычет за последний год накоплений, приходит в 1-й месяц пенсии.
-function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths, lastRefund){
+// Универсальный симулятор пенсии (помесячно, календарный).
+// workMonths — сколько месяцев ещё работаем: идут взносы, а вычеты приходят в январе.
+// startMonthIdx — календарный месяц начала пенсии; carry — взносы последнего года накоплений.
+function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry){
   const m=monthlyRate(annual);
-  let b=bal, zeroAt=-1, balAtWorkEnd=bal;
+  let b=bal, zeroAt=-1, balAtWorkEnd=bal, curYear=carry||0;
   const series=[bal];
-  const refund=Math.min(monthly*12,400000)*taxRate;
   for(let i=1;i<=horizonMonths;i++){
+    const calMonth=(startMonthIdx+i-1)%12;
     if(zeroAt<0){
-      if(i===1) b+=lastRefund;                       // вычет за последний год накоплений
-      if(i>12 && (i-1)%12===0 && i-1<=workMonths) b+=refund; // вычеты за годы работы на пенсии
-      b=b*(1+m)+(i<=workMonths?monthly:0)-W;
+      if(calMonth===0){
+        if(taxRate>0) b+=Math.min(curYear,400000)*taxRate;
+        curYear=0;
+      }
+      const working=i<=workMonths;
+      b=b*(1+m)+(working?monthly:0)-W;
+      if(working) curYear+=monthly;
       if(b<=0){zeroAt=i; b=0;}
     }
     if(i===workMonths) balAtWorkEnd=b;
@@ -195,22 +213,22 @@ function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths,
 }
 
 // Максимальное W, при котором капитал не тает (двоичный поиск)
-function solvePerpetual(bal, annual, monthly, taxRate, workMonths, horizonMonths, lastRefund){
+function solvePerpetual(bal, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry){
   let lo=0, hi=bal*(monthlyRate(annual)+0.02)+monthly+200000;
   for(let k=0;k<60;k++){
     const mid=(lo+hi)/2;
-    const s=simPension(bal, mid, annual, monthly, taxRate, workMonths, horizonMonths, lastRefund);
+    const s=simPension(bal, mid, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry);
     if(s.zeroAt<0 && s.end>=s.balAtWorkEnd*0.999) lo=mid; else hi=mid;
   }
   return lo;
 }
 
 // Максимальное W, при котором счёт обнуляется ровно к nMonths
-function solveAnnuity(bal, annual, monthly, taxRate, workMonths, nMonths, lastRefund){
+function solveAnnuity(bal, annual, monthly, taxRate, workMonths, nMonths, startMonthIdx, carry){
   let lo=0, hi=bal+monthly*nMonths+1e7;
   for(let k=0;k<60;k++){
     const mid=(lo+hi)/2;
-    const s=simPension(bal, mid, annual, monthly, taxRate, Math.min(workMonths,nMonths), nMonths, lastRefund);
+    const s=simPension(bal, mid, annual, monthly, taxRate, Math.min(workMonths,nMonths), nMonths, startMonthIdx, carry);
     if(s.zeroAt<0 && s.end>0) lo=mid; else hi=mid;
   }
   return lo;
@@ -237,8 +255,22 @@ function render(){
   $('workHint').style.display=workOn?'':'none';
 
   const startCap=+$('startCap').value||0;
-  const years=Math.max(ageRet-ageNow,0);
-  const acc=accumulate(years, monthly, ret, taxRate, reinvest, startCap);
+  const precise=$('precise').checked;
+  $('fPrecise').style.display=precise?'':'none';
+  let ageStart=ageNow, monthsAcc=Math.max(ageRet-ageNow,0)*12, startMonthIdx=0, startDateObj=null;
+  if(precise){
+    const bd=new Date($('birthDate').value), sd=new Date($('startDate').value);
+    if(!isNaN(bd)&&!isNaN(sd)){
+      ageStart=((sd.getFullYear()-bd.getFullYear())*12+(sd.getMonth()-bd.getMonth()))/12;
+      const retDate=new Date(bd); retDate.setFullYear(bd.getFullYear()+ageRet);
+      monthsAcc=Math.max((retDate.getFullYear()-sd.getFullYear())*12+(retDate.getMonth()-sd.getMonth()),0);
+      startMonthIdx=sd.getMonth();
+      startDateObj=sd;
+      $('ageNowV').textContent=fmtAge(ageStart)+' (из даты рождения)';
+    }
+  }
+  const years=Math.round(monthsAcc/12*10)/10;
+  const acc=accumulate(monthsAcc, startMonthIdx, monthly, ret, taxRate, reinvest, startCap);
 
   const res=[];
   res.push({lbl:'Накоплено к '+ageRet+' годам', val:fmtM(acc.bal), cls:'big'});
@@ -249,16 +281,17 @@ function render(){
   const effTax=reinvest?taxRate:0;
   const workMonths=workOn?Math.max(workAge-ageRet,0)*12:0;
   const pMonthly=workOn?monthly:0; // взносы на пенсии — только если работаем
-  const lastRefund=(reinvest&&years>0)?Math.min(monthly*12,400000)*taxRate:0;
+  const pStartMonthIdx=(startMonthIdx+monthsAcc)%12;
+  const carry=(reinvest&&monthsAcc>0)?acc.carry:0;
   const horizon=Math.max((100-ageRet)*12,12);
   const workTxt=workOn?' (работаю до '+workAge+')':'';
 
-  const perp=solvePerpetual(acc.bal, retP, pMonthly, effTax, workMonths, horizon, lastRefund);
+  const perp=solvePerpetual(acc.bal, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry);
   let summary='';
   let pensionSeries=[];
 
   if(mode==='A'){
-    const s=simPension(acc.bal, W, retP, pMonthly, effTax, workMonths, horizon, lastRefund);
+    const s=simPension(acc.bal, W, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry);
     pensionSeries=s.series;
     if(s.zeroAt<0){
       res.push({lbl:'Снимая '+fmt(W)+'/мес'+workTxt, val:'хватит до 100 лет и дальше', cls:'ok'});
@@ -272,14 +305,14 @@ function render(){
     }
   }else if(mode==='B'){
     res.push({lbl:'Вечная рента (капитал не тает)', val:fmt(perp)+'/мес', cls:'ok'});
-    pensionSeries=simPension(acc.bal, perp, retP, pMonthly, effTax, workMonths, 40*12, lastRefund).series;
+    pensionSeries=simPension(acc.bal, perp, retP, pMonthly, effTax, workMonths, 40*12, pStartMonthIdx, carry).series;
     summary='Снимая '+fmt(perp)+' в месяц, вы не трогаете тело капитала — '+fmtM(acc.bal)+' остаётся наследникам. Любая сумма выше начнёт «проедать» депозит.'+(workOn?' Учтены взносы и вычеты, пока вы работаете до '+workAge+' лет.':'');
   }else{
     const nMonths=Math.max((zeroAge-ageRet)*12,1);
-    const W2=solveAnnuity(acc.bal, retP, pMonthly, effTax, workMonths, nMonths, lastRefund);
+    const W2=solveAnnuity(acc.bal, retP, pMonthly, effTax, workMonths, nMonths, pStartMonthIdx, carry);
     res.push({lbl:'Можно снимать до '+zeroAge+' лет', val:fmt(W2)+'/мес', cls:'ok'});
     res.push({lbl:'Период выплат', val:(zeroAge-ageRet)+' лет'});
-    pensionSeries=simPension(acc.bal, W2, retP, pMonthly, effTax, Math.min(workMonths,nMonths), nMonths, lastRefund).series;
+    pensionSeries=simPension(acc.bal, W2, retP, pMonthly, effTax, Math.min(workMonths,nMonths), nMonths, pStartMonthIdx, carry).series;
     summary='Аннуитет: снимая '+fmt(W2)+'/мес, вы обнулите счёт ровно к '+zeroAge+' годам. Для сравнения, вечная рента (капитал не тает) — '+fmt(perp)+'/мес.'+(workOn?' Учтены взносы и вычеты до '+Math.min(workAge,zeroAge)+' лет.':'');
   }
 
@@ -290,13 +323,13 @@ function render(){
 
   // График: помесячные данные, зум и прицел
   const ages=[], vals=[];
-  acc.series.forEach((v,i)=>{ages.push(ageNow+i/12); vals.push(v);});
+  acc.series.forEach((v,i)=>{ages.push(ageStart+i/12); vals.push(v);});
   pensionSeries.forEach((v,i)=>{
     if(i===0) return; // стык
-    ages.push(ageRet+i/12); vals.push(v);
+    ages.push(ageStart+(monthsAcc+i)/12); vals.push(v);
   });
   const CS=chartState;
-  CS.data={ages, vals, splitIdx:acc.series.length-1};
+  CS.data={ages, vals, splitIdx:acc.series.length-1, startDate:startDateObj};
   if(CS.sel && CS.sel[1]>=vals.length) CS.sel=null;
   if(CS.hover!=null && CS.hover>=vals.length) CS.hover=null;
   drawChart(); updateInfo();
@@ -395,6 +428,30 @@ function drawChart(){
     ctx.beginPath(); ctx.arc(hx,hy,4.5,0,Math.PI*2);
     ctx.fillStyle='#fff'; ctx.fill();
     ctx.lineWidth=2; ctx.strokeStyle=st.hover<sp?'#2dd4bf':'#60a5fa'; ctx.stroke();
+    ctx.lineWidth=1;
+
+    // бейджи-легенда на осях
+    let xTxt=fmtAge(D.ages[st.hover]);
+    if(D.startDate){
+      const d=new Date(D.startDate); d.setMonth(d.getMonth()+st.hover);
+      xTxt=d.toLocaleDateString('ru-RU',{month:'short',year:'numeric'}).replace(' г.','')+' · '+xTxt;
+    }
+    function badge(text,cx,cy,anchorRight){
+      ctx.font='11px Segoe UI, sans-serif';
+      const bw=ctx.measureText(text).width+12, bh=18;
+      let x=anchorRight?cx-bw:cx-bw/2;
+      x=Math.max(2,Math.min(W-bw-2,x));
+      const y=Math.max(2,Math.min(H-bh-2,cy-bh/2));
+      ctx.fillStyle='#1d3d63';
+      ctx.strokeStyle='rgba(45,212,191,.7)';
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(x,y,bw,bh,4); else ctx.rect(x,y,bw,bh);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle='#e8eef7'; ctx.textAlign='center';
+      ctx.fillText(text,x+bw/2,y+13);
+    }
+    badge(fmtM(D.vals[st.hover]), padL-2, hy, true); // слева — баланс
+    badge(xTxt, hx, H-11);                            // снизу — возраст/дата
   }
 }
 
@@ -419,7 +476,12 @@ function updateInfo(){
       const pct=D.vals[i-12]>0?(d/D.vals[i-12]*100):null;
       rate=' · рост за посл. год '+(d>=0?'+':'−')+fmt(Math.abs(d))+(pct!=null?' ('+(pct>=0?'+':'')+pct.toFixed(1)+'%)':'');
     }
-    el.innerHTML='<b>'+fmtAge(D.ages[i])+'</b>: '+fmtM(D.vals[i])+rate;
+    let when=fmtAge(D.ages[i]);
+    if(D.startDate){
+      const d=new Date(D.startDate); d.setMonth(d.getMonth()+i);
+      when=d.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})+' ('+when+')';
+    }
+    el.innerHTML='<b>'+when+'</b>: '+fmtM(D.vals[i])+rate;
   }else{
     el.textContent=dflt;
   }
@@ -497,7 +559,7 @@ $('mA').onclick=()=>setMode('A');
 $('mB').onclick=()=>setMode('B');
 $('mC').onclick=()=>setMode('C');
 
-['ageNow','ageRet','startCap','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge'].forEach(id=>{
+['ageNow','ageRet','startCap','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge','precise','birthDate','startDate'].forEach(id=>{
   $(id).addEventListener('input',render);
 });
 // возраст обнуления и «работаю до» не могут быть раньше пенсии
