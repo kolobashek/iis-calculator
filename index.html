@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Калькулятор ИИС: накопление и пенсия</title>
+<style>
+  :root{
+    --bg:#0e1a2b; --card:#152a45; --card2:#1b3557; --accent:#2dd4bf; --accent2:#60a5fa;
+    --text:#e8eef7; --muted:#8fa5c0; --danger:#f87171; --ok:#4ade80;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); padding:24px;}
+  h1{font-size:26px; margin-bottom:6px;}
+  .sub{color:var(--muted); margin-bottom:24px; font-size:14px;}
+  .grid{display:grid; grid-template-columns:340px 1fr; gap:20px; align-items:start;}
+  @media(max-width:900px){.grid{grid-template-columns:1fr;}}
+  .card{background:var(--card); border-radius:14px; padding:20px;}
+  .card h2{font-size:15px; text-transform:uppercase; letter-spacing:.5px; color:var(--accent); margin-bottom:16px;}
+  .field{margin-bottom:16px;}
+  .field label{display:flex; justify-content:space-between; font-size:13px; color:var(--muted); margin-bottom:6px;}
+  .field label b{color:var(--text); font-weight:600;}
+  input[type=range]{width:100%; accent-color:var(--accent);}
+  input[type=number]{width:100%; background:var(--card2); border:1px solid #2a4a75; border-radius:8px; color:var(--text); padding:8px 10px; font-size:15px;}
+  select{width:100%; background:var(--card2); border:1px solid #2a4a75; border-radius:8px; color:var(--text); padding:8px 10px; font-size:14px;}
+  .toggle{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); cursor:pointer;}
+  .toggle input{accent-color:var(--accent); width:16px; height:16px;}
+  .results{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:20px;}
+  .res{background:var(--card2); border-radius:12px; padding:14px 16px;}
+  .res .lbl{font-size:12px; color:var(--muted); margin-bottom:4px;}
+  .res .val{font-size:20px; font-weight:700;}
+  .res .val.big{font-size:24px; color:var(--accent);}
+  .res .val.warn{color:var(--danger);}
+  .res .val.ok{color:var(--ok);}
+  .res .note{font-size:11px; color:var(--muted); margin-top:4px;}
+  .chart-wrap{background:var(--card); border-radius:14px; padding:20px; margin-top:20px;}
+  .mode-tabs{display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;}
+  .mode-tabs button{flex:1; min-width:110px; background:var(--card2); border:1px solid transparent; color:var(--muted); padding:9px 6px; border-radius:9px; cursor:pointer; font-size:12.5px; line-height:1.3;}
+  .mode-tabs button.active{border-color:var(--accent); color:var(--text); background:#1d3d63;}
+  .hint{font-size:12px; color:var(--muted); margin-top:8px; line-height:1.5;}
+  .divider{border-top:1px solid #2a4a75; margin:18px 0;}
+  footer{margin-top:20px; font-size:11px; color:var(--muted);}
+</style>
+</head>
+<body>
+<h1>Калькулятор ИИС: накопление и пенсия</h1>
+<div class="sub">Фаза 1 — копим и реинвестируем налоговые вычеты. Фаза 2 — живём на накопленное.</div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h2>Фаза накопления</h2>
+      <div class="field">
+        <label>Возраст сейчас <b id="ageNowV"></b></label>
+        <input type="range" id="ageNow" min="18" max="60" value="35">
+      </div>
+      <div class="field">
+        <label>Возраст выхода «на пенсию» <b id="ageRetV"></b></label>
+        <input type="range" id="ageRet" min="30" max="75" value="50">
+      </div>
+      <div class="field">
+        <label>Взнос в месяц, ₽</label>
+        <input type="number" id="monthly" value="17000" step="1000" min="0">
+      </div>
+      <div class="field">
+        <label>Доходность, % годовых <b id="retV"></b></label>
+        <input type="range" id="ret" min="1" max="25" value="10" step="0.5">
+      </div>
+      <div class="field">
+        <label>Ставка НДФЛ (вычет)</label>
+        <select id="tax">
+          <option value="0.13" selected>13%</option>
+          <option value="0.15">15%</option>
+          <option value="0">без вычета</option>
+        </select>
+      </div>
+      <label class="toggle"><input type="checkbox" id="reinvest" checked> Реинвестировать вычеты на счёт</label>
+      <div class="hint">Вычет считается с взносов до 400 000 ₽/год и возвращается в начале следующего года.</div>
+    </div>
+
+    <div class="card" style="margin-top:20px;">
+      <h2>Фаза пенсии</h2>
+      <div class="mode-tabs">
+        <button id="mA" class="active">Забираю N ₽/мес — на сколько хватит?</button>
+        <button id="mB">Вечная рента — сколько можно?</button>
+        <button id="mC">Обнулить к возрасту X — сколько в месяц?</button>
+      </div>
+      <div class="field" id="fWithdraw">
+        <label>Снимаю в месяц, ₽</label>
+        <input type="number" id="withdraw" value="80000" step="5000" min="0">
+      </div>
+      <div class="field" id="fZeroAge" style="display:none;">
+        <label>Обнулить счёт к возрасту <b id="zeroAgeV"></b></label>
+        <input type="range" id="zeroAge" min="55" max="100" value="85">
+      </div>
+      <div class="field">
+        <label>Доходность на пенсии, % годовых <b id="retPV"></b></label>
+        <input type="range" id="retP" min="1" max="20" value="8" step="0.5">
+      </div>
+      <div class="hint">На пенсии обычно уходят в более консервативный портфель — доходность ниже.</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Итоги</h2>
+      <div class="results" id="results"></div>
+      <div class="divider"></div>
+      <div class="hint" id="summary"></div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="chart" style="width:100%; height:320px; display:block;"></canvas>
+      <div class="hint" style="margin-top:10px;"><span style="color:#2dd4bf;">●</span> накопление &nbsp; <span style="color:#60a5fa;">●</span> пенсия (снятие)</div>
+    </div>
+  </div>
+</div>
+
+<footer>Расчёты приблизительные, номинальные (без учёта инфляции), не являются финансовым советом. НДФЛ при снятии не учитывается (по ИИС-3 доход до 30 млн ₽ освобождён при соблюдении срока владения).</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const fmt=n=>{
+  if(!isFinite(n)) return '∞';
+  return Math.round(n).toLocaleString('ru-RU')+' ₽';
+};
+const fmtM=n=>{
+  if(!isFinite(n)) return '∞';
+  if(Math.abs(n)>=1e6) return (n/1e6).toLocaleString('ru-RU',{maximumFractionDigits:2})+' млн ₽';
+  return fmt(n);
+};
+
+let mode='A';
+
+function monthlyRate(annual){ return Math.pow(1+annual,1/12)-1; }
+
+// Фаза накопления: помесячно, вычет за прошлый год падает в январе
+function accumulate(years, monthly, annual, taxRate, reinvest){
+  const m=monthlyRate(annual);
+  let bal=0, contrib=0, refunds=0;
+  const series=[0];
+  const capBase=Math.min(monthly*12, 400000);
+  for(let y=0;y<years;y++){
+    if(y>0 && reinvest && taxRate>0){
+      const ref=capBase*taxRate;
+      bal+=ref; refunds+=ref;
+    }
+    for(let i=0;i<12;i++){
+      bal=(bal+monthly)*(1+m);
+      contrib+=monthly;
+    }
+    series.push(bal);
+  }
+  return {bal, contrib, refunds, series};
+}
+
+// Режим A: сколько месяцев протянет при снятии W/мес
+function drawdown(bal, W, annual, maxMonths){
+  const m=monthlyRate(annual);
+  const series=[bal];
+  let months=0;
+  let b=bal;
+  while(b>0 && months<maxMonths){
+    b=b*(1+m)-W;
+    months++;
+    if(months%12===0) series.push(Math.max(b,0));
+  }
+  if(months%12!==0) series.push(Math.max(b,0));
+  return {months, series, exhausted:b<=0};
+}
+
+// Режим B: вечная рента = проценты за месяц
+function perpetual(bal, annual){
+  return bal*monthlyRate(annual);
+}
+
+// Режим C: аннуитет — обнулить за n месяцев
+function annuity(bal, annual, nMonths){
+  const m=monthlyRate(annual);
+  if(nMonths<=0) return Infinity;
+  if(m===0) return bal/nMonths;
+  return bal*m/(1-Math.pow(1+m,-nMonths));
+}
+
+function annuitySeries(bal, W, annual, nMonths){
+  const m=monthlyRate(annual);
+  const series=[bal]; let b=bal;
+  for(let i=1;i<=nMonths;i++){
+    b=b*(1+m)-W;
+    if(i%12===0||i===nMonths) series.push(Math.max(b,0));
+  }
+  return series;
+}
+
+function render(){
+  const ageNow=+$('ageNow').value, ageRet=+$('ageRet').value;
+  const monthly=+$('monthly').value||0;
+  const ret=+$('ret').value/100, retP=+$('retP').value/100;
+  const taxRate=+$('tax').value;
+  const reinvest=$('reinvest').checked;
+  const W=+$('withdraw').value||0;
+  const zeroAge=+$('zeroAge').value;
+
+  $('ageNowV').textContent=ageNow+' лет';
+  $('ageRetV').textContent=ageRet+' лет';
+  $('retV').textContent=$('ret').value+'%';
+  $('retPV').textContent=$('retP').value+'%';
+  $('zeroAgeV').textContent=zeroAge+' лет';
+
+  const years=Math.max(ageRet-ageNow,0);
+  const acc=accumulate(years, monthly, ret, taxRate, reinvest);
+
+  const res=[];
+  res.push({lbl:'Накоплено к '+ageRet+' годам', val:fmtM(acc.bal), cls:'big'});
+  res.push({lbl:'Свои взносы за '+years+' лет', val:fmtM(acc.contrib)});
+  res.push({lbl:'Реинвестировано вычетов', val:fmtM(acc.refunds)});
+  res.push({lbl:'Доход от инвестиций', val:fmtM(acc.bal-acc.contrib-acc.refunds), cls:'ok'});
+
+  const perp=perpetual(acc.bal, retP);
+  let summary='';
+  let pensionSeries=[], pensionYears=0;
+
+  if(mode==='A'){
+    const maxMonths=100*12;
+    const dd=drawdown(acc.bal, W, retP, maxMonths);
+    pensionSeries=dd.series;
+    pensionYears=Math.ceil(dd.months/12);
+    if(!dd.exhausted){
+      res.push({lbl:'Снимая '+fmt(W)+'/мес', val:'хватит навсегда', cls:'ok'});
+      summary='Снятие '+fmt(W)+'/мес меньше месячного дохода капитала ('+fmt(perp)+'/мес) — счёт не тает, а растёт.';
+    }else{
+      const yrs=Math.floor(dd.months/12), mos=dd.months%12;
+      const endAge=ageRet+dd.months/12;
+      res.push({lbl:'Снимая '+fmt(W)+'/мес', val:yrs+' лет '+mos+' мес', cls:dd.months<20*12?'warn':''});
+      res.push({lbl:'Деньги закончатся в возрасте', val:'~'+Math.round(endAge)+' лет', cls:endAge<80?'warn':''});
+      summary='Депозит растает за '+yrs+' лет '+mos+' мес. Чтобы остаток не сгорал, снимайте не больше '+fmt(perp)+'/мес — это «вечная рента» при '+$('retP').value+'% годовых.';
+    }
+  }else if(mode==='B'){
+    res.push({lbl:'Вечная рента (капитал не тает)', val:fmt(perp)+'/мес', cls:'ok'});
+    pensionYears=40;
+    pensionSeries=annuitySeries(acc.bal, perp, retP, pensionYears*12);
+    summary='Снимая ровно проценты — '+fmt(perp)+' в месяц — вы никогда не трогаете тело капитала: '+fmtM(acc.bal)+' остаётся детям/наследникам. Любая сумма выше начнёт «проедать» депозит.';
+  }else{
+    const nMonths=Math.max((zeroAge-ageRet)*12,1);
+    const W2=annuity(acc.bal, retP, nMonths);
+    res.push({lbl:'Можно снимать до '+zeroAge+' лет', val:fmt(W2)+'/мес', cls:'ok'});
+    res.push({lbl:'Период выплат', val:(zeroAge-ageRet)+' лет'});
+    pensionYears=zeroAge-ageRet;
+    pensionSeries=annuitySeries(acc.bal, W2, retP, nMonths);
+    summary='Аннуитет: снимая '+fmt(W2)+'/мес, вы полностью обнулите счёт ровно к '+zeroAge+' годам. Для сравнения, вечная рента (капитал не тает) — '+fmt(perp)+'/мес.';
+  }
+
+  $('results').innerHTML=res.map(r=>
+    '<div class="res"><div class="lbl">'+r.lbl+'</div><div class="val '+(r.cls||'')+'">'+r.val+'</div></div>'
+  ).join('');
+  $('summary').textContent=summary;
+
+  // График: накопление + пенсия (без внешних библиотек)
+  const labels=[], data=[];
+  acc.series.forEach((v,i)=>{labels.push(ageNow+i); data.push(v);});
+  pensionSeries.forEach((v,i)=>{
+    if(i===0) return; // стык
+    labels.push(ageRet+i); data.push(v);
+  });
+  drawChart(labels, data, acc.series.length-1);
+}
+
+function drawChart(labels, data, splitIdx){
+  const canvas=$('chart');
+  const dpr=window.devicePixelRatio||1;
+  const W=canvas.clientWidth, H=canvas.clientHeight||320;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  const ctx=canvas.getContext('2d');
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,W,H);
+
+  const padL=56, padR=14, padT=14, padB=32;
+  const pw=W-padL-padR, ph=H-padT-padB;
+  const maxV=Math.max(...data,1);
+  const n=data.length;
+  const X=i=>padL+pw*(n>1?i/(n-1):0);
+  const Y=v=>padT+ph*(1-v/maxV);
+
+  // сетка + подписи Y
+  ctx.strokeStyle='rgba(143,165,192,.12)';
+  ctx.fillStyle='#8fa5c0';
+  ctx.font='11px Segoe UI, sans-serif';
+  ctx.textAlign='right';
+  const ySteps=5;
+  for(let s=0;s<=ySteps;s++){
+    const v=maxV*s/ySteps, y=Y(v);
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
+    ctx.fillText((v/1e6).toLocaleString('ru-RU',{maximumFractionDigits:1})+' млн', padL-8, y+4);
+  }
+  // подписи X (возраст)
+  ctx.textAlign='center';
+  const step=Math.max(1,Math.ceil(n/12));
+  for(let i=0;i<n;i+=step){
+    ctx.fillText(labels[i], X(i), H-10);
+  }
+
+  // заливка и линия по сегментам
+  function seg(from,to,color,fill){
+    if(to<=from) return;
+    ctx.beginPath();
+    ctx.moveTo(X(from),Y(data[from]));
+    for(let i=from+1;i<=to;i++) ctx.lineTo(X(i),Y(data[i]));
+    ctx.strokeStyle=color; ctx.lineWidth=2.5; ctx.stroke();
+    ctx.lineTo(X(to),padT+ph); ctx.lineTo(X(from),padT+ph); ctx.closePath();
+    ctx.fillStyle=fill; ctx.fill();
+  }
+  seg(0,Math.min(splitIdx,n-1),'#2dd4bf','rgba(45,212,191,.15)');
+  seg(splitIdx,n-1,'#60a5fa','rgba(96,165,250,.15)');
+
+  // вертикальная отметка выхода на пенсию
+  if(splitIdx>0&&splitIdx<n-1){
+    ctx.strokeStyle='rgba(232,238,247,.35)';
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(X(splitIdx),padT); ctx.lineTo(X(splitIdx),padT+ph); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+window.addEventListener('resize',render);
+
+function setMode(m){
+  mode=m;
+  ['A','B','C'].forEach(x=>$('m'+x).classList.toggle('active',x===m));
+  $('fWithdraw').style.display=m==='A'?'':'none';
+  $('fZeroAge').style.display=m==='C'?'':'none';
+  render();
+}
+$('mA').onclick=()=>setMode('A');
+$('mB').onclick=()=>setMode('B');
+$('mC').onclick=()=>setMode('C');
+
+['ageNow','ageRet','monthly','ret','tax','reinvest','withdraw','retP','zeroAge'].forEach(id=>{
+  $(id).addEventListener('input',render);
+});
+// возраст обнуления не может быть раньше пенсии
+$('ageRet').addEventListener('input',()=>{ $('zeroAge').min=+$('ageRet').value+1; });
+render();
+</script>
+</body>
+</html>
