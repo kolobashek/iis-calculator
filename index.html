@@ -40,6 +40,8 @@
   .hint{font-size:12px; color:var(--muted); margin-top:8px; line-height:1.5;}
   .divider{border-top:1px solid #2a4a75; margin:18px 0;}
   footer{margin-top:20px; font-size:11px; color:var(--muted);}
+  .zbtn{background:var(--card2); border:1px solid #2a4a75; color:var(--text); border-radius:6px; min-width:30px; height:26px; cursor:pointer; margin-left:4px; font-size:14px;}
+  .zbtn:hover{border-color:var(--accent);}
 </style>
 </head>
 <body>
@@ -119,8 +121,16 @@
       <div class="hint" id="summary"></div>
     </div>
     <div class="chart-wrap">
-      <canvas id="chart" style="width:100%; height:320px; display:block;"></canvas>
-      <div class="hint" style="margin-top:10px;"><span style="color:#2dd4bf;">●</span> накопление &nbsp; <span style="color:#60a5fa;">●</span> пенсия (снятие)</div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div class="hint" style="margin-top:0;"><span style="color:#2dd4bf;">●</span> накопление &nbsp; <span style="color:#60a5fa;">●</span> пенсия (снятие)</div>
+        <div>
+          <button class="zbtn" id="zOut" title="Отдалить">−</button>
+          <button class="zbtn" id="zIn" title="Приблизить">+</button>
+          <button class="zbtn" id="zReset" title="Сбросить масштаб">⟲</button>
+        </div>
+      </div>
+      <canvas id="chart" style="width:100%; height:320px; display:block; cursor:crosshair;"></canvas>
+      <div class="hint" id="chartInfo" style="margin-top:10px;">Наведите курсор — точка и скорость роста · потяните мышью — статистика за период · колесо — масштаб · двойной клик — сброс.</div>
     </div>
   </div>
 </div>
@@ -157,8 +167,8 @@ function accumulate(years, monthly, annual, taxRate, reinvest, startCap){
     for(let i=0;i<12;i++){
       bal=(bal+monthly)*(1+m);
       contrib+=monthly;
+      series.push(bal);
     }
-    series.push(bal);
   }
   return {bal, contrib, refunds, series};
 }
@@ -179,7 +189,7 @@ function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths,
       if(b<=0){zeroAt=i; b=0;}
     }
     if(i===workMonths) balAtWorkEnd=b;
-    if(i%12===0||i===horizonMonths) series.push(b);
+    series.push(b);
   }
   return {end:b, series, zeroAt, balAtWorkEnd};
 }
@@ -278,72 +288,203 @@ function render(){
   ).join('');
   $('summary').textContent=summary;
 
-  // График: накопление + пенсия (без внешних библиотек)
-  const labels=[], data=[];
-  acc.series.forEach((v,i)=>{labels.push(ageNow+i); data.push(v);});
+  // График: помесячные данные, зум и прицел
+  const ages=[], vals=[];
+  acc.series.forEach((v,i)=>{ages.push(ageNow+i/12); vals.push(v);});
   pensionSeries.forEach((v,i)=>{
     if(i===0) return; // стык
-    labels.push(ageRet+i); data.push(v);
+    ages.push(ageRet+i/12); vals.push(v);
   });
-  drawChart(labels, data, acc.series.length-1);
+  const CS=chartState;
+  CS.data={ages, vals, splitIdx:acc.series.length-1};
+  if(CS.sel && CS.sel[1]>=vals.length) CS.sel=null;
+  if(CS.hover!=null && CS.hover>=vals.length) CS.hover=null;
+  drawChart(); updateInfo();
 }
 
-function drawChart(labels, data, splitIdx){
+const chartState={view:{a:0,b:1}, sel:null, hover:null, data:null, drag:null, _m:null};
+
+function fmtAge(a){
+  const y=Math.floor(a+1e-6), mo=Math.round((a-y)*12);
+  return mo>0 ? y+' л '+mo+' мес' : y+' лет';
+}
+
+function drawChart(){
+  const st=chartState, D=st.data; if(!D) return;
   const canvas=$('chart');
   const dpr=window.devicePixelRatio||1;
   const W=canvas.clientWidth, H=canvas.clientHeight||320;
   canvas.width=W*dpr; canvas.height=H*dpr;
   const ctx=canvas.getContext('2d');
-  ctx.scale(dpr,dpr);
-  ctx.clearRect(0,0,W,H);
+  ctx.scale(dpr,dpr); ctx.clearRect(0,0,W,H);
 
   const padL=56, padR=14, padT=14, padB=32;
   const pw=W-padL-padR, ph=H-padT-padB;
-  const maxV=Math.max(...data,1);
-  const n=data.length;
-  const X=i=>padL+pw*(n>1?i/(n-1):0);
+  const n=D.vals.length;
+  let i0=Math.max(0,Math.round(st.view.a*(n-1)));
+  let i1=Math.min(n-1,Math.round(st.view.b*(n-1)));
+  if(i1-i0<12){ i1=Math.min(n-1,i0+12); i0=Math.max(0,i1-12); }
+  const a0=D.ages[i0], a1=D.ages[i1];
+  let maxV=1; for(let i=i0;i<=i1;i++) if(D.vals[i]>maxV) maxV=D.vals[i];
+  maxV*=1.05;
+  const Xa=age=>padL+pw*(age-a0)/(a1-a0);
+  const X=i=>Xa(D.ages[i]);
   const Y=v=>padT+ph*(1-v/maxV);
+  st._m={i0,i1,a0,a1,padL,pw,padT,ph};
 
   // сетка + подписи Y
   ctx.strokeStyle='rgba(143,165,192,.12)';
   ctx.fillStyle='#8fa5c0';
   ctx.font='11px Segoe UI, sans-serif';
   ctx.textAlign='right';
-  const ySteps=5;
-  for(let s=0;s<=ySteps;s++){
-    const v=maxV*s/ySteps, y=Y(v);
+  for(let s=0;s<=5;s++){
+    const v=maxV*s/5, y=Y(v);
     ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
-    ctx.fillText((v/1e6).toLocaleString('ru-RU',{maximumFractionDigits:1})+' млн', padL-8, y+4);
+    ctx.fillText((v/1e6).toLocaleString('ru-RU',{maximumFractionDigits:2})+' млн', padL-8, y+4);
   }
-  // подписи X (возраст)
+  // подписи X — целые возрасты
   ctx.textAlign='center';
-  const step=Math.max(1,Math.ceil(n/12));
-  for(let i=0;i<n;i+=step){
-    ctx.fillText(labels[i], X(i), H-10);
+  const stepA=Math.max(1,Math.round((a1-a0)/10));
+  for(let ag=Math.ceil(a0); ag<=Math.floor(a1); ag+=stepA){
+    ctx.fillText(ag, Xa(ag), H-10);
   }
 
-  // заливка и линия по сегментам
+  // выделенный период
+  if(st.sel){
+    const s0=Math.max(st.sel[0],i0), s1=Math.min(st.sel[1],i1);
+    if(s1>s0){
+      ctx.fillStyle='rgba(232,238,247,.08)';
+      ctx.fillRect(X(s0),padT,X(s1)-X(s0),ph);
+      ctx.strokeStyle='rgba(232,238,247,.4)';
+      ctx.setLineDash([3,3]);
+      [s0,s1].forEach(i=>{ctx.beginPath(); ctx.moveTo(X(i),padT); ctx.lineTo(X(i),padT+ph); ctx.stroke();});
+      ctx.setLineDash([]);
+    }
+  }
+
+  // линия и заливка по сегментам
   function seg(from,to,color,fill){
     if(to<=from) return;
     ctx.beginPath();
-    ctx.moveTo(X(from),Y(data[from]));
-    for(let i=from+1;i<=to;i++) ctx.lineTo(X(i),Y(data[i]));
+    ctx.moveTo(X(from),Y(D.vals[from]));
+    for(let i=from+1;i<=to;i++) ctx.lineTo(X(i),Y(D.vals[i]));
     ctx.strokeStyle=color; ctx.lineWidth=2.5; ctx.stroke();
     ctx.lineTo(X(to),padT+ph); ctx.lineTo(X(from),padT+ph); ctx.closePath();
     ctx.fillStyle=fill; ctx.fill();
   }
-  seg(0,Math.min(splitIdx,n-1),'#2dd4bf','rgba(45,212,191,.15)');
-  seg(splitIdx,n-1,'#60a5fa','rgba(96,165,250,.15)');
+  const sp=D.splitIdx;
+  if(sp>i0) seg(i0,Math.min(sp,i1),'#2dd4bf','rgba(45,212,191,.15)');
+  if(i1>sp) seg(Math.max(sp,i0),i1,'#60a5fa','rgba(96,165,250,.15)');
 
-  // вертикальная отметка выхода на пенсию
-  if(splitIdx>0&&splitIdx<n-1){
+  // пунктир выхода на пенсию
+  if(sp>i0&&sp<i1){
     ctx.strokeStyle='rgba(232,238,247,.35)';
     ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.moveTo(X(splitIdx),padT); ctx.lineTo(X(splitIdx),padT+ph); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(sp),padT); ctx.lineTo(X(sp),padT+ph); ctx.stroke();
     ctx.setLineDash([]);
   }
+
+  // прицел
+  if(st.hover!=null && st.hover>=i0 && st.hover<=i1){
+    const hx=X(st.hover), hy=Y(D.vals[st.hover]);
+    ctx.strokeStyle='rgba(232,238,247,.45)';
+    ctx.setLineDash([4,3]);
+    ctx.beginPath(); ctx.moveTo(hx,padT); ctx.lineTo(hx,padT+ph); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(padL,hy); ctx.lineTo(W-padR,hy); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(hx,hy,4.5,0,Math.PI*2);
+    ctx.fillStyle='#fff'; ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle=st.hover<sp?'#2dd4bf':'#60a5fa'; ctx.stroke();
+  }
 }
-window.addEventListener('resize',render);
+
+function updateInfo(){
+  const st=chartState, D=st.data, el=$('chartInfo');
+  if(!D) return;
+  const dflt='Наведите курсор — точка и скорость роста · потяните мышью — статистика за период · колесо — масштаб · двойной клик — сброс.';
+  if(st.sel && st.sel[1]-st.sel[0]>1){
+    const [i,j]=st.sel;
+    const yrs=(D.ages[j]-D.ages[i]);
+    const d=D.vals[j]-D.vals[i];
+    const perYear=d/yrs;
+    const cagr=D.vals[i]>0?(Math.pow(D.vals[j]/D.vals[i],1/yrs)-1):null;
+    el.innerHTML='<b>Период '+fmtAge(D.ages[i])+' → '+fmtAge(D.ages[j])+'</b> ('+yrs.toFixed(1)+' лет): '+
+      (d>=0?'+':'−')+fmtM(Math.abs(d))+' · скорость '+(perYear>=0?'+':'−')+fmt(Math.abs(perYear))+'/год'+
+      (cagr!=null?' · '+(cagr*100).toFixed(1)+'%/год':'');
+  }else if(st.hover!=null){
+    const i=st.hover;
+    let rate='';
+    if(i>=12){
+      const d=D.vals[i]-D.vals[i-12];
+      const pct=D.vals[i-12]>0?(d/D.vals[i-12]*100):null;
+      rate=' · рост за посл. год '+(d>=0?'+':'−')+fmt(Math.abs(d))+(pct!=null?' ('+(pct>=0?'+':'')+pct.toFixed(1)+'%)':'');
+    }
+    el.innerHTML='<b>'+fmtAge(D.ages[i])+'</b>: '+fmtM(D.vals[i])+rate;
+  }else{
+    el.textContent=dflt;
+  }
+}
+
+// --- события графика ---
+(function(){
+  const cv=$('chart');
+  function idxAt(clientX){
+    const st=chartState, D=st.data; if(!D||!st._m) return null;
+    const r=cv.getBoundingClientRect();
+    const px=clientX-r.left;
+    const {a0,a1,padL,pw}=st._m;
+    const age=a0+(px-padL)/pw*(a1-a0);
+    const i=Math.round((age-D.ages[0])*12);
+    return Math.max(0,Math.min(D.vals.length-1,i));
+  }
+  cv.addEventListener('mousemove',e=>{
+    const i=idxAt(e.clientX);
+    if(chartState.drag!=null && i!=null){
+      chartState.sel=[Math.min(chartState.drag,i),Math.max(chartState.drag,i)];
+    }
+    chartState.hover=i;
+    drawChart(); updateInfo();
+  });
+  cv.addEventListener('mouseleave',()=>{
+    chartState.hover=null; chartState.drag=null;
+    drawChart(); updateInfo();
+  });
+  cv.addEventListener('mousedown',e=>{
+    chartState.drag=idxAt(e.clientX);
+    chartState.sel=null;
+  });
+  window.addEventListener('mouseup',()=>{
+    if(chartState.sel && chartState.sel[1]-chartState.sel[0]<2) chartState.sel=null;
+    chartState.drag=null;
+    drawChart(); updateInfo();
+  });
+  function zoom(factor, centerFrac){
+    const v=chartState.view;
+    const c=v.a+(centerFrac==null?0.5:centerFrac)*(v.b-v.a);
+    let a=c-(c-v.a)*factor, b=c+(v.b-c)*factor;
+    a=Math.max(0,a); b=Math.min(1,b);
+    const n=chartState.data?chartState.data.vals.length:100;
+    const minSpan=12/(n-1);
+    if(b-a<minSpan){const mid=(a+b)/2; a=Math.max(0,mid-minSpan/2); b=Math.min(1,a+minSpan);}
+    chartState.view={a,b};
+    drawChart(); updateInfo();
+  }
+  cv.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const st=chartState; if(!st._m) return;
+    const r=cv.getBoundingClientRect();
+    const frac=Math.max(0,Math.min(1,(e.clientX-r.left-st._m.padL)/st._m.pw));
+    zoom(e.deltaY>0?1.3:0.75, frac);
+  },{passive:false});
+  cv.addEventListener('dblclick',()=>{
+    chartState.view={a:0,b:1}; chartState.sel=null;
+    drawChart(); updateInfo();
+  });
+  $('zIn').onclick=()=>zoom(0.7);
+  $('zOut').onclick=()=>zoom(1.4);
+  $('zReset').onclick=()=>{chartState.view={a:0,b:1}; chartState.sel=null; drawChart(); updateInfo();};
+})();
+window.addEventListener('resize',()=>{drawChart();});
 
 function setMode(m){
   mode=m;
