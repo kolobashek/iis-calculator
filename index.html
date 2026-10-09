@@ -26,6 +26,21 @@
   .chart-controls{display:flex; gap:4px; flex-shrink:0;}
   .inflation-impact{border-left:3px solid #f87171; background:rgba(248,113,113,.08); border-radius:6px; padding:10px 12px; margin-bottom:12px; font-size:13px; line-height:1.6;}
   .loss-swatch{background:repeating-linear-gradient(135deg,#f87171 0 2px,rgba(248,113,113,.25) 2px 5px);}
+  .rate-panels{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px;}
+  .rate-panel{background:var(--card2); padding:16px; border-radius:12px; min-width:0;}
+  .rate-panel h3{font-size:14px; margin-bottom:14px;}
+  .rate-row{margin-bottom:12px;}
+  .rate-label{display:flex; justify-content:space-between; gap:10px; font-size:12px; margin-bottom:6px;}
+  .rate-label b{white-space:nowrap;}
+  .rate-track{height:12px; border-radius:4px; overflow:hidden; background:rgba(14,26,43,.55);}
+  .rate-bar{height:100%; border-radius:4px;}
+  .rate-axis{display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin:4px 0 14px;}
+  .rate-verdict{font-size:13px; line-height:1.5; margin-bottom:6px;}
+  .rate-real{font-size:24px; font-weight:700;}
+  .rate-positive{color:var(--ok);}
+  .rate-negative{color:var(--danger);}
+  .rate-neutral{color:var(--muted);}
+  @media(max-width:600px){.rate-panels{grid-template-columns:1fr;}}
   @media(max-width:480px){body{padding:12px;} .card,.chart-wrap{padding:16px;} h1{font-size:23px;}}
   @media(max-width:900px){.grid{grid-template-columns:1fr;}}
   .card{background:var(--card); border-radius:14px; padding:20px;}
@@ -156,6 +171,11 @@
       <div class="divider"></div>
       <div class="hint" id="summary"></div>
     </div>
+    <section class="card" id="rateComparison" aria-labelledby="rateComparisonTitle" style="margin-top:20px;">
+      <h2 id="rateComparisonTitle">Доходность против инфляции</h2>
+      <div class="rate-panels" id="ratePanels"></div>
+      <div class="hint">Обе полосы показывают годовые ставки на одинаковой шкале 0–25%. Разница ставок указана в процентных пунктах. Изменение покупательной способности рассчитано как (1 + доходность) / (1 + инфляция) − 1. Пополнения и налоговые вычеты в доходность не включены.</div>
+    </section>
     <div class="chart-wrap">
       <div class="field">
         <label for="chartUnits">Суммы на графике</label>
@@ -344,6 +364,24 @@ function buildChartMetrics(nominal,components,inflation,realUnits){
   };
 }
 
+function renderRateComparison(ret,retP,inflation){
+  const percent=n=>(n*100).toLocaleString('ru-RU',{maximumFractionDigits:2})+'%';
+  $('ratePanels').innerHTML=[['Накопление',ret],['Пенсия',retP]].map(([phase,annual])=>{
+    const difference=annual-inflation;
+    const real=(1+annual)/(1+inflation)-1;
+    const state=Math.abs(difference)<1e-10?'neutral':difference>0?'positive':'negative';
+    const gap=(Math.abs(difference)*100).toLocaleString('ru-RU',{maximumFractionDigits:2});
+    const verdict=state==='neutral'?'Доходность равна инфляции':state==='positive'?'Доходность выше инфляции на '+gap+' п. п.':'Инфляция выше доходности на '+gap+' п. п.';
+    const realLabel=state==='neutral'?'Покупательная способность не меняется':state==='positive'?'Покупательная способность растёт':'Покупательная способность падает';
+    const rows=[['Доходность',annual,'#2dd4bf'],['Инфляция',inflation,'#f87171']].map(([label,value,color])=>
+      '<div class="rate-row"><div class="rate-label"><span>'+label+'</span><b>'+percent(value)+' в год</b></div><div class="rate-track" aria-hidden="true"><div class="rate-bar" style="width:'+(value/.25*100)+'%;background:'+color+'"></div></div></div>'
+    ).join('');
+    return '<article class="rate-panel" data-state="'+state+'"><h3>'+phase+'</h3>'+rows+
+      '<div class="rate-axis" aria-hidden="true"><span>0%</span><span>5%</span><span>10%</span><span>15%</span><span>20%</span><span>25%</span></div>'+
+      '<div class="rate-verdict rate-'+state+'">'+verdict+'</div><div class="rate-real rate-'+state+'">'+(real>0?'+':'')+percent(real)+' в год</div><div class="hint">'+realLabel+'</div></article>';
+  }).join('');
+}
+
 function render(){
   const ageNow=+$('ageNow').value, ageRet=+$('ageRet').value;
   const monthly=Math.max(0,+$('monthly').value||0);
@@ -395,6 +433,7 @@ function render(){
   document.querySelector('label[for="withdraw"]').textContent='Снимаю в месяц, '+baseLabel;
   const realReturn=(1+ret)/(1+inflation)-1;
   const realPensionReturn=(1+retP)/(1+inflation)-1;
+  renderRateComparison(ret,retP,inflation);
   const pct=n=>(n*100).toLocaleString('ru-RU',{maximumFractionDigits:2})+'%';
 
   const res=[];
