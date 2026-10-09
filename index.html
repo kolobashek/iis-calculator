@@ -19,6 +19,8 @@
   .chart-legend{display:flex; flex-wrap:wrap; gap:10px 16px; font-size:12px; color:var(--muted); margin:12px 0;}
   .chart-legend span{display:inline-flex; align-items:center; gap:6px;}
   .chart-legend [hidden]{display:none;}
+  .chart-legend .is-active{color:var(--text); outline:1px solid currentColor; outline-offset:4px; border-radius:2px;}
+  .chart-projection{padding:10px 12px; background:var(--card2); border-left:3px solid var(--accent); border-radius:6px; font-size:13px; line-height:1.5; margin-top:10px;}
   .swatch{display:inline-block; width:12px; height:12px; border-radius:3px; flex-shrink:0;}
   .breakdown{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:12px;}
   .breakdown .res{padding:12px; border-top:3px solid var(--metric-color);}
@@ -183,10 +185,10 @@
       </div>
       <div class="inflation-impact" id="inflationImpact"></div>
       <div class="chart-legend" aria-label="Состав капитала">
-        <span><i class="swatch" style="background:#60a5fa;"></i>Собственные деньги</span>
-        <span><i class="swatch" style="background:#c4b5fd;"></i>Налоговые вычеты</span>
-        <span><i class="swatch" style="background:#2dd4bf;"></i>Проценты / доход</span>
-        <span id="lossLegend"><i class="swatch loss-swatch"></i>Съедает инфляция</span>
+        <span data-chart-line="own"><i class="swatch" style="background:#60a5fa;"></i>Собственные деньги</span>
+        <span data-chart-line="refunds"><i class="swatch" style="background:#c4b5fd;"></i>Налоговые вычеты</span>
+        <span data-chart-line="total"><i class="swatch" style="background:#2dd4bf;"></i>Проценты / доход</span>
+        <span id="lossLegend" data-chart-line="nominal"><i class="swatch loss-swatch"></i>Съедает инфляция</span>
       </div>
       <div class="chart-toolbar">
         <label class="toggle"><input type="checkbox" id="showInflation"><i class="swatch" style="background:#fbbf24;"></i>Рост цен, % — правая шкала</label>
@@ -199,6 +201,8 @@
         </div>
       </div>
       <canvas id="chart" role="img" aria-label="Состав капитала и красная область обесценения от инфляции. Числа доступны в разбивке под графиком." style="width:100%; height:320px; display:block; cursor:crosshair;"></canvas>
+      <div class="chart-projection" id="chartProjection"></div>
+      <div class="hint">Задержите курсор на линии на 0,5 секунды — перекрестье переключится на неё. Синяя граница: свои деньги; фиолетовая: свои + вычеты; зелёная: свои + вычеты + доход; красная: общая сумма на счёте. Последняя выбранная линия сохраняется.</div>
       <div class="field" style="margin-top:16px; margin-bottom:8px;">
         <label for="chartMonth">Месяц для разбивки <b id="chartMonthV"></b></label>
         <input type="range" id="chartMonth" min="0" max="1" value="0" step="1">
@@ -383,6 +387,7 @@ function renderRateComparison(ret,retP,inflation){
 }
 
 function render(){
+  cancelLineDwell();
   const ageNow=+$('ageNow').value, ageRet=+$('ageRet').value;
   const monthly=Math.max(0,+$('monthly').value||0);
   const ret=+$('ret').value/100, retP=+$('retP').value/100;
@@ -527,7 +532,58 @@ function render(){
   drawChart(); updateInfo();
 }
 
-const chartState={view:{a:0,b:1}, sel:null, hover:null, selectedMonth:null, data:null, drag:null, _m:null};
+const chartState={view:{a:0,b:1}, sel:null, hover:null, selectedMonth:null, lineKey:'total',lineCandidate:null,lineTimer:null,data:null, drag:null, _m:null};
+
+function chartLines(){
+  const D=chartState.data;if(!D)return [];
+  const lines=[
+    {key:'own',label:'Собственные деньги',values:D.components.own,color:'#60a5fa',unit:D.unitLabel},
+    {key:'refunds',label:'Собственные + вычеты',values:D.components.own.map((v,i)=>v+D.components.refunds[i]),color:'#c4b5fd',unit:D.unitLabel},
+    {key:'total',label:'Собственные + вычеты + доход',values:D.vals,color:'#2dd4bf',unit:D.unitLabel}
+  ];
+  if(D.showLoss)lines.push({key:'nominal',label:'Общая сумма на счёте',values:D.nominal,color:'#f87171',unit:'в будущих рублях'});
+  if($('showInflation').checked)lines.push({key:'prices',label:'Накопленный рост цен',values:D.inflationPct,color:'#fbbf24',unit:'с начала расчёта',axis:'percent'});
+  return lines;
+}
+
+function activeChartLine(){
+  const lines=chartLines();
+  const active=lines.find(line=>line.key===chartState.lineKey)||lines.find(line=>line.key==='total');
+  if(active)chartState.lineKey=active.key;
+  return active;
+}
+
+function formatLineValue(line,value,compact=false){
+  return line.axis==='percent'?value.toLocaleString('ru-RU',{maximumFractionDigits:1})+'%':compact?fmtM(value):fmt(value);
+}
+
+function cancelLineDwell(){
+  clearTimeout(chartState.lineTimer);
+  chartState.lineTimer=null;chartState.lineCandidate=null;
+}
+
+function hoverChartLine(x,y){
+  const st=chartState,m=st._m;if(!m)return;
+  // Сравниваем с нарисованным отрезком между месяцами, а не с округлённой точкой.
+  const index=m.i0+(x-m.padL)/m.pw*(m.i1-m.i0);
+  const a=Math.max(m.i0,Math.min(m.i1,Math.floor(index))),b=Math.min(m.i1,a+1),fraction=index-a;
+  let closest=null,distance=8;
+  for(const line of chartLines()){
+    const value=line.values[a]+(line.values[b]-line.values[a])*fraction;
+    const scale=line.axis==='percent'?m.maxInflation:m.maxV;
+    const d=Math.abs(y-(m.padT+m.ph*(1-value/scale)));
+    if(d<distance || (d===distance && line.key===st.lineKey)){closest=line;distance=d;}
+  }
+  if(!closest || closest.key===st.lineKey){cancelLineDwell();return;}
+  if(st.lineCandidate===closest.key)return;
+  cancelLineDwell();
+  st.lineCandidate=closest.key;
+  st.lineTimer=setTimeout(()=>{
+    st.lineKey=st.lineCandidate;
+    st.lineTimer=null;st.lineCandidate=null;
+    drawChart();updateInfo();
+  },500);
+}
 
 function fmtAge(a){
   const y=Math.floor(a+1e-6), mo=Math.round((a-y)*12);
@@ -544,6 +600,12 @@ function chartDate(data,index){
 function updateBreakdown(){
   const st=chartState,D=st.data;if(!D)return;
   const i=st.sel?st.sel[1]:(st.hover!=null?st.hover:st.selectedMonth);
+  const line=activeChartLine();
+  $('chartProjection').textContent=line.label+': '+formatLineValue(line,line.values[i])+' · '+line.unit;
+  $('chartProjection').style.borderLeftColor=line.color;
+  $('chartProjection').dataset.line=line.key;
+  $('chartProjection').dataset.value=line.values[i];
+  document.querySelectorAll('[data-chart-line]').forEach(el=>el.classList.toggle('is-active',el.dataset.chartLine===line.key));
   const label=index=>chartDate(D,index).toLocaleDateString('ru-RU',{month:'long',year:'numeric'})+' · '+fmtAge(D.ages[index]);
   $('chartMonthV').textContent=fmtAge(D.ages[st.selectedMonth]);
   $('chartMonth').setAttribute('aria-valuetext',label(st.selectedMonth));
@@ -586,7 +648,7 @@ function drawChart(){
   const Y=v=>padT+ph*(1-v/maxV);
   const maxInflation=Math.max(1,D.inflationPct[i1]*1.05);
   const YInflation=v=>padT+ph*(1-v/maxInflation);
-  st._m={i0,i1,a0,a1,padL,pw,padT,ph,maxV};
+  st._m={i0,i1,a0,a1,padL,pw,padT,ph,maxV,maxInflation};
 
   // сетка + подписи Y
   ctx.strokeStyle='rgba(143,165,192,.12)';
@@ -681,7 +743,9 @@ function drawChart(){
   // прицел
   const focus=st.sel?st.sel[1]:(st.hover!=null?st.hover:st.selectedMonth);
   if(focus!=null && focus>=i0 && focus<=i1){
-    const hx=X(focus), hy=Y(D.vals[focus]);
+    const line=activeChartLine();
+    const hx=X(focus),hy=line.axis==='percent'?YInflation(line.values[focus]):Y(line.values[focus]);
+    st.projection={line:line.key,index:focus,value:line.values[focus],x:hx,y:hy};
     ctx.strokeStyle='rgba(232,238,247,.45)';
     ctx.setLineDash([4,3]);
     ctx.beginPath(); ctx.moveTo(hx,padT); ctx.lineTo(hx,padT+ph); ctx.stroke();
@@ -689,18 +753,19 @@ function drawChart(){
     ctx.setLineDash([]);
     ctx.beginPath(); ctx.arc(hx,hy,4.5,0,Math.PI*2);
     ctx.fillStyle='#fff'; ctx.fill();
-    ctx.lineWidth=2; ctx.strokeStyle='#2dd4bf'; ctx.stroke();
+    ctx.lineWidth=2; ctx.strokeStyle=line.color; ctx.stroke();
     ctx.lineWidth=1;
     if(D.showLoss && D.inflationGap[focus]>0){
       const top=Y(D.nominal[focus]);
       ctx.beginPath();ctx.arc(hx,top,4,0,Math.PI*2);ctx.fillStyle='#f87171';ctx.fill();
       const lossPct=(D.inflationGap[focus]/D.nominal[focus]*100).toLocaleString('ru-RU',{maximumFractionDigits:1});
-      if(hy-top>32){
+      const realY=Y(D.real[focus]);
+      if(realY-top>32){
         const text='Инфляция −'+lossPct+'%';
         ctx.font='bold 12px Segoe UI, sans-serif';ctx.textAlign='center';
         const half=ctx.measureText(text).width/2;
         const cx=Math.max(padL+half+4,Math.min(W-padR-half-4,hx));
-        ctx.fillStyle='#fecaca';ctx.fillText(text,cx,(top+hy)/2);
+        ctx.fillStyle='#fecaca';ctx.fillText(text,cx,(top+realY)/2);
       }
     }
 
@@ -720,14 +785,15 @@ function drawChart(){
       x=Math.max(2,Math.min(W-bw-2,x));
       const y=Math.max(2,Math.min(H-bh-2,cy-bh/2));
       ctx.fillStyle='#1d3d63';
-      ctx.strokeStyle='rgba(45,212,191,.7)';
+      ctx.strokeStyle=line.color;
       ctx.beginPath();
       if(ctx.roundRect) ctx.roundRect(x,y,bw,bh,4); else ctx.rect(x,y,bw,bh);
       ctx.fill(); ctx.stroke();
       ctx.fillStyle='#e8eef7'; ctx.textAlign='center';
       ctx.fillText(text,x+bw/2,y+13);
     }
-    badge(fmtM(D.vals[focus]), padL-2, hy, true); // слева — баланс
+    if(line.axis==='percent')badge(formatLineValue(line,line.values[focus]),W-2,hy,true);
+    else badge(formatLineValue(line,line.values[focus],true),padL-2,hy,true);
     badge(xTxt, hx, H-11);                            // снизу — возраст/дата
   }
 }
@@ -736,30 +802,35 @@ function updateInfo(){
   const st=chartState, D=st.data, el=$('chartInfo');
   if(!D) return;
   updateBreakdown();
+  const line=activeChartLine(),values=line.values;
   const dflt='Суммы '+D.unitLabel+'. Курсор — изменение баланса · тянуть мышью — период · колесо — масштаб · Shift+мышь / ◀ ▶ — двигать график · двойной клик — сброс. Изменение баланса включает взносы, вычеты и снятия; это не доходность инвестиций.';
   if(st.sel && st.sel[1]-st.sel[0]>1){
     const [i,j]=st.sel;
     const yrs=(D.ages[j]-D.ages[i]);
-    const d=D.vals[j]-D.vals[i];
+    const d=values[j]-values[i];
     const perYear=d/yrs;
-    const cagr=D.vals[i]>0?(Math.pow(D.vals[j]/D.vals[i],1/yrs)-1):null;
-    el.innerHTML='<b>Период '+fmtAge(D.ages[i])+' → '+fmtAge(D.ages[j])+'</b> ('+yrs.toFixed(1)+' лет): '+
+    const cagr=values[i]>0?(Math.pow(values[j]/values[i],1/yrs)-1):null;
+    if(line.axis==='percent'){
+      el.textContent=line.label+' · '+fmtAge(D.ages[i])+' → '+fmtAge(D.ages[j])+': '+formatLineValue(line,values[i])+' → '+formatLineValue(line,values[j])+' · изменение '+d.toLocaleString('ru-RU',{maximumFractionDigits:1})+' п. п.';
+      return;
+    }
+    el.innerHTML='<b>'+line.label+' · Период '+fmtAge(D.ages[i])+' → '+fmtAge(D.ages[j])+'</b> ('+yrs.toFixed(1)+' лет): '+
       (d>=0?'+':'−')+fmtM(Math.abs(d))+' · скорость '+(perYear>=0?'+':'−')+fmt(Math.abs(perYear))+'/год'+
-      (cagr!=null?' · '+(cagr*100).toFixed(1)+'%/год':'')+' · '+D.unitLabel+'; с учётом взносов и снятий';
+      (cagr!=null?' · '+(cagr*100).toFixed(1)+'%/год':'')+' · '+line.unit+'; с учётом взносов и снятий';
   }else if(st.hover!=null || st.selectedMonth!=null){
     const i=st.hover!=null?st.hover:st.selectedMonth;
     let rate='';
-    if(i>=12){
-      const d=D.vals[i]-D.vals[i-12];
-      const pct=D.vals[i-12]>0?(d/D.vals[i-12]*100):null;
-      rate=' · изменение баланса за год '+(d>=0?'+':'−')+fmt(Math.abs(d))+(pct!=null?' ('+(pct>=0?'+':'')+pct.toFixed(1)+'%)':'');
+    if(i>=12 && line.axis!=='percent'){
+      const d=values[i]-values[i-12];
+      const pct=values[i-12]>0?(d/values[i-12]*100):null;
+      rate=' · изменение выбранной суммы за год '+(d>=0?'+':'−')+fmt(Math.abs(d))+(pct!=null?' ('+(pct>=0?'+':'')+pct.toFixed(1)+'%)':'');
     }
     let when=fmtAge(D.ages[i]);
     if(D.startDate){
       const d=chartDate(D,i);
       when=d.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})+' ('+when+')';
     }
-    el.innerHTML='<b>'+when+'</b>: '+fmtM(D.vals[i])+rate+' · '+D.unitLabel+'; с учётом взносов и снятий';
+    el.innerHTML='<b>'+when+'</b> · '+line.label+': '+formatLineValue(line,values[i],true)+rate+' · '+line.unit+(line.axis==='percent'?'':'; с учётом взносов и снятий');
   }else{
     el.textContent=dflt;
   }
@@ -784,6 +855,7 @@ function updateInfo(){
     drawChart();updateInfo();
   });
   function shiftView(df){ // сдвиг видимого окна на df (доля всего диапазона)
+    cancelLineDwell();
     const v=chartState.view, span=v.b-v.a;
     let a=v.a+df, b=v.b+df;
     if(a<0){a=0;b=span;}
@@ -806,7 +878,7 @@ function updateInfo(){
     if(!bounds)return;
     const x=e.clientX-rect.left,y=e.clientY-rect.top;
     // Подписи осей и поля canvas не меняют последнюю точку графика.
-    if(chartState.drag==null && (x<bounds.padL || x>bounds.padL+bounds.pw || y<bounds.padT || y>bounds.padT+bounds.ph))return;
+    if(chartState.drag==null && (x<bounds.padL || x>bounds.padL+bounds.pw || y<bounds.padT || y>bounds.padT+bounds.ph)){cancelLineDwell();return;}
     const i=idxAt(e.clientX);
     if(chartState.drag!=null && i!=null){
       chartState.sel=[Math.min(chartState.drag,i),Math.max(chartState.drag,i)];
@@ -816,13 +888,16 @@ function updateInfo(){
       chartState.selectedMonth=chartState.sel?chartState.sel[1]:i;
       $('chartMonth').value=chartState.selectedMonth;
     }
+    if(chartState.drag==null && !chartState.sel)hoverChartLine(x,y);else cancelLineDwell();
     drawChart(); updateInfo();
   });
   cv.addEventListener('mouseleave',()=>{
+    cancelLineDwell();
     chartState.hover=null; chartState.drag=null; chartState.pan=null;
     drawChart(); updateInfo();
   });
   cv.addEventListener('mousedown',e=>{
+    cancelLineDwell();
     if(e.shiftKey || e.button===1){
       e.preventDefault();
       chartState.pan={x:e.clientX, a:chartState.view.a, b:chartState.view.b};
@@ -839,6 +914,7 @@ function updateInfo(){
     drawChart(); updateInfo();
   });
   function zoom(factor, centerFrac){
+    cancelLineDwell();
     const v=chartState.view;
     const c=v.a+(centerFrac==null?0.5:centerFrac)*(v.b-v.a);
     let a=c-(c-v.a)*factor, b=c+(v.b-c)*factor;
@@ -862,6 +938,7 @@ function updateInfo(){
     zoom(e.deltaY>0?1.3:0.75, frac);
   },{passive:false});
   cv.addEventListener('dblclick',()=>{
+    cancelLineDwell();
     chartState.view={a:0,b:1}; chartState.sel=null;
     drawChart(); updateInfo();
   });
@@ -869,15 +946,16 @@ function updateInfo(){
   $('zOut').onclick=()=>zoom(1.4);
   $('pLeft').onclick=()=>shiftView(-(chartState.view.b-chartState.view.a)*0.25);
   $('pRight').onclick=()=>shiftView((chartState.view.b-chartState.view.a)*0.25);
-  $('zReset').onclick=()=>{chartState.view={a:0,b:1}; chartState.sel=null; drawChart(); updateInfo();};
+  $('zReset').onclick=()=>{cancelLineDwell();chartState.view={a:0,b:1}; chartState.sel=null; drawChart(); updateInfo();};
 })();
-window.addEventListener('resize',()=>{drawChart();});
+window.addEventListener('resize',()=>{cancelLineDwell();drawChart();});
 $('chartMonth').addEventListener('input',()=>{
+  cancelLineDwell();
   chartState.selectedMonth=+$('chartMonth').value;
   chartState.hover=null;chartState.sel=null;
   drawChart();updateInfo();
 });
-$('showInflation').addEventListener('input',()=>{drawChart();});
+$('showInflation').addEventListener('input',()=>{cancelLineDwell();drawChart();updateInfo();});
 
 function setMode(m){
   mode=m;
