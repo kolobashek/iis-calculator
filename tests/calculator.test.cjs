@@ -8,6 +8,7 @@ const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const ctx=vm.createContext({});
 vm.runInContext(script.slice(0,script.indexOf('function render()')),ctx);
 const {priceFactor,monthlyRate,accumulate,simPension,solveAnnuity,solvePerpetual}=ctx;
+const {buildChartMetrics}=ctx;
 const close=(actual,expected,tolerance=1e-5)=>assert.ok(Math.abs(actual-expected)<=tolerance,`${actual} != ${expected}`);
 
 test('10% annual inflation compounds by date, not by subtraction',()=>{
@@ -90,4 +91,66 @@ test('zero balance and zero payouts remain finite; no annuity can be paid',()=>{
   close(solveAnnuity(0,.08,0,0,0,120,0,0,{inflation:.06}),0);
   close(solvePerpetual(0,.08,0,0,0,600,0,0,{inflation:.06}),0);
   assert.equal(simPension(0,0,.08,0,0,0,12,0,0).zeroAt,-1);
+});
+
+test('accumulation separates principal, tax refunds and compounded investment income',()=>{
+  const annual=1.01**12-1;
+  const a=accumulate(1,0,100,annual,0,false,1000);
+  close(a.components.own[1],1100);
+  close(a.components.interest[1],11);
+  close(a.components.refunds[1],0);
+  const b=accumulate(25,9,40000,annual,.13,true,1000,{inflation:.1,indexContributions:true});
+  close(b.components.own.at(-1),1000+b.contrib);
+  close(b.components.refunds.at(-1),b.refunds);
+  for(let i=0;i<b.series.length;i++){
+    close(b.components.own[i]+b.components.refunds[i]+b.components.interest[i],b.series[i]);
+  }
+});
+
+test('pension withdrawals reduce all sources proportionally, including new refunds and interest',()=>{
+  const initial={own:1000,refunds:100,interest:100};
+  const s=simPension(1200,100,1.01**12-1,10,.13,1,1,0,200,{initialComponents:initial});
+  const before=1248.26,after=1148.26;
+  close(s.end,after);
+  close(s.components.own[1],1010*after/before);
+  close(s.components.refunds[1],126*after/before);
+  close(s.components.interest[1],112.26*after/before);
+  assert.deepEqual(initial,{own:1000,refunds:100,interest:100});
+});
+
+test('component balances join across phases and sum to balance through work and depletion',()=>{
+  const a=accumulate(180,9,18000,.1,.13,true,36554,{inflation:.06,indexContributions:true});
+  const initialComponents=Object.fromEntries(Object.entries(a.components).map(([k,v])=>[k,v.at(-1)]));
+  const s=simPension(a.bal,80000,.08,18000,.13,60,600,9,a.carry,{inflation:.06,elapsedMonths:180,indexContributions:true,initialComponents});
+  for(const key of Object.keys(initialComponents))close(s.components[key][0],initialComponents[key]);
+  for(let i=0;i<s.series.length;i++){
+    const values=Object.values(s.components).map(v=>v[i]);
+    assert.ok(values.every(v=>Number.isFinite(v)&&v>=0));
+    close(values.reduce((a,b)=>a+b,0),s.series[i]);
+    if(s.zeroAt>=0&&i>=s.zeroAt)assert.ok(values.every(v=>v===0));
+  }
+  assert.ok(s.zeroAt>0);
+});
+
+test('chart units transform every component and keep inflation metrics independent of display units',()=>{
+  const a=accumulate(24,0,1000,.08,.13,true,10000);
+  const real=buildChartMetrics(a.series,a.components,.1,true);
+  const nominal=buildChartMetrics(a.series,a.components,.1,false);
+  for(let i=0;i<a.series.length;i++){
+    close(Object.values(real.components).reduce((sum,v)=>sum+v[i],0),real.vals[i]);
+    close(Object.values(nominal.components).reduce((sum,v)=>sum+v[i],0),nominal.vals[i]);
+    close(real.real[i]+real.inflationGap[i],real.nominal[i]);
+    close(real.inflationPct[i],nominal.inflationPct[i]);
+    close(real.inflationGap[i],nominal.inflationGap[i]);
+  }
+  close(real.inflationPct[24],21);
+  close(real.real[24],a.bal/1.21);
+});
+
+test('zero inflation makes price growth and purchasing-power gap exactly zero',()=>{
+  const a=accumulate(120,6,18000,.08,.13,true,1000);
+  const data=buildChartMetrics(a.series,a.components,0,true);
+  assert.ok(data.inflationPct.every(v=>v===0));
+  assert.ok(data.inflationGap.every(v=>v===0));
+  data.vals.forEach((v,i)=>close(v,a.series[i]));
 });

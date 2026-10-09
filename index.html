@@ -16,6 +16,13 @@
   .grid{display:grid; grid-template-columns:340px 1fr; gap:20px; align-items:start;}
   .grid > div{min-width:0;}
   .chart-toolbar{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;}
+  .chart-legend{display:flex; flex-wrap:wrap; gap:10px 16px; font-size:12px; color:var(--muted); margin:12px 0;}
+  .chart-legend span{display:inline-flex; align-items:center; gap:6px;}
+  .swatch{display:inline-block; width:12px; height:12px; border-radius:3px; flex-shrink:0;}
+  .breakdown{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:12px;}
+  .breakdown .res{padding:12px; border-top:3px solid var(--metric-color);}
+  .breakdown .val{font-size:17px; overflow-wrap:anywhere;}
+  .chart-controls{display:flex; gap:4px; flex-shrink:0;}
   @media(max-width:480px){body{padding:12px;} .card,.chart-wrap{padding:16px;} h1{font-size:23px;}}
   @media(max-width:900px){.grid{grid-template-columns:1fr;}}
   .card{background:var(--card); border-radius:14px; padding:20px;}
@@ -151,9 +158,14 @@
         <label for="chartUnits">Суммы на графике</label>
         <select id="chartUnits"><option value="real" selected>В ценах начала расчёта</option><option value="nominal">В будущих рублях</option></select>
       </div>
+      <div class="chart-legend" aria-label="Состав капитала">
+        <span><i class="swatch" style="background:#60a5fa;"></i>Собственные деньги</span>
+        <span><i class="swatch" style="background:#c4b5fd;"></i>Налоговые вычеты</span>
+        <span><i class="swatch" style="background:#2dd4bf;"></i>Проценты / доход</span>
+      </div>
       <div class="chart-toolbar">
-        <div class="hint" style="margin-top:0;"><span style="color:#2dd4bf;">●</span> накопление &nbsp; <span style="color:#60a5fa;">●</span> пенсия (снятие)</div>
-        <div>
+        <label class="toggle"><input type="checkbox" id="showInflation" checked><i class="swatch" style="background:#fbbf24;"></i>Рост цен, % — правая шкала</label>
+        <div class="chart-controls">
           <button class="zbtn" id="pLeft" title="Сдвинуть влево">◀</button>
           <button class="zbtn" id="pRight" title="Сдвинуть вправо">▶</button>
           <button class="zbtn" id="zOut" title="Отдалить">−</button>
@@ -161,7 +173,15 @@
           <button class="zbtn" id="zReset" title="Сбросить масштаб">⟲</button>
         </div>
       </div>
-      <canvas id="chart" style="width:100%; height:320px; display:block; cursor:crosshair;"></canvas>
+      <canvas id="chart" role="img" aria-label="Состав капитала по месяцам и накопленный рост цен. Числа доступны в разбивке под графиком." style="width:100%; height:320px; display:block; cursor:crosshair;"></canvas>
+      <div class="field" style="margin-top:16px; margin-bottom:8px;">
+        <label for="chartMonth">Месяц для разбивки <b id="chartMonthV"></b></label>
+        <input type="range" id="chartMonth" min="0" max="1" value="0" step="1">
+      </div>
+      <div class="hint" id="breakdownDate"></div>
+      <div class="breakdown" id="chartBreakdown"></div>
+      <div class="hint">Слои в сумме дают остаток на счёте. На пенсии снятия условно уменьшают все слои пропорционально: «собственные деньги» здесь — их оставшаяся часть. Проценты включают весь инвестиционный доход, в том числе доход на вычеты. Пунктирная вертикаль — начало пенсии.</div>
+      <div class="hint">Жёлтая линия — накопленный рост цен с начала расчёта, а не годовая ставка. Обесценение в разбивке — разница между номинальным остатком и его оценкой в ценах начала расчёта; это не списание со счёта.</div>
       <div class="hint" id="chartInfo" style="margin-top:10px;">Курсор — точка и скорость роста · тянуть мышью — статистика за период · колесо — масштаб · Shift+мышь / ◀ ▶ — двигать график · двойной клик — сброс.</div>
     </div>
   </div>
@@ -196,6 +216,7 @@ function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, 
   const m=monthlyRate(annual);
   let bal=startCap||0, contrib=0, refunds=0, curYear=0;
   const series=[bal];
+  const components={own:[bal],refunds:[0],interest:[0]};
   for(let i=0;i<nMonths;i++){
     const calMonth=(startMonthIdx+i)%12;
     if(calMonth===0 && i>0){
@@ -209,8 +230,11 @@ function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, 
     bal=(bal+payment)*(1+m);
     contrib+=payment; curYear+=payment;
     series.push(bal);
+    components.own.push((startCap||0)+contrib);
+    components.refunds.push(refunds);
+    components.interest.push(Math.max(0,bal-(startCap||0)-contrib-refunds));
   }
-  return {bal, contrib, refunds, series, carry:curYear};
+  return {bal, contrib, refunds, series, carry:curYear,components};
 }
 
 // Универсальный симулятор пенсии (помесячно, календарный).
@@ -224,24 +248,46 @@ function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths,
   const m=monthlyRate(annual);
   let b=bal, zeroAt=-1, balAtWorkEnd=bal, curYear=carry||0;
   const series=[bal];
+  // Разбивка включается только для отображаемой симуляции, не для поиска выплаты.
+  const parts=options.initialComponents?{...options.initialComponents}:null;
+  const components=parts?{own:[parts.own],refunds:[parts.refunds],interest:[parts.interest]}:null;
   for(let i=1;i<=horizonMonths;i++){
     const calMonth=(startMonthIdx+i-1)%12;
     if(zeroAt<0){
       if(calMonth===0){
-        if(taxRate>0) b+=Math.min(curYear,400000)*taxRate;
+        if(taxRate>0){
+          const refund=Math.min(curYear,400000)*taxRate;
+          b+=refund;
+          if(parts) parts.refunds+=refund;
+        }
         curYear=0;
       }
       const working=i<=workMonths;
       const payment=working?contributionAt(monthly,inflation,elapsedMonths+i-1,indexContributions):0;
       const withdrawal=W*priceFactor(inflation,elapsedMonths+i);
+      const earned=b*m;
+      const beforeWithdrawal=b+earned+payment;
       b=b*(1+m)+payment-withdrawal;
       if(working) curYear+=payment;
       if(b<0 || (b<=1e-7 && withdrawal>0)){zeroAt=i; b=0;}
+      if(parts){
+        parts.own+=payment;
+        parts.interest+=earned;
+        const fraction=beforeWithdrawal>0?b/beforeWithdrawal:0;
+        parts.own*=fraction;
+        parts.refunds*=fraction;
+        parts.interest=Math.max(0,b-parts.own-parts.refunds);
+      }
     }
     if(i===workMonths) balAtWorkEnd=b;
     series.push(b);
+    if(parts){
+      components.own.push(parts.own);
+      components.refunds.push(parts.refunds);
+      components.interest.push(parts.interest);
+    }
   }
-  return {end:b, series, zeroAt, balAtWorkEnd};
+  return {end:b, series, zeroAt, balAtWorkEnd,components};
 }
 
 // После завершения работы и последнего январского вычета реальный капитал
@@ -278,6 +324,18 @@ function solveAnnuity(bal, annual, monthly, taxRate, workMonths, nMonths, startM
     if(affordable(mid)) lo=mid; else hi=mid;
   }
   return lo;
+}
+
+function buildChartMetrics(nominal,components,inflation,realUnits){
+  const factors=nominal.map((_,i)=>priceFactor(inflation,i));
+  const real=nominal.map((v,i)=>v/factors[i]);
+  return {
+    nominal,real,vals:realUnits?real:nominal,
+    components:Object.fromEntries(Object.entries(components).map(([key,values])=>
+      [key,values.map((v,i)=>realUnits?v/factors[i]:v)])),
+    inflationPct:factors.map(f=>(f-1)*100),
+    inflationGap:nominal.map((v,i)=>v-real[i])
+  };
 }
 
 function render(){
@@ -349,14 +407,19 @@ function render(){
   const horizon=Math.max(Math.round((100-pensionAge)*12),12);
   const workTxt=workOn?' (работаю до '+workAge+')':'';
   const pensionOptions={inflation,indexContributions,elapsedMonths:monthsAcc};
+  const displayOptions={...pensionOptions,initialComponents:Object.fromEntries(
+    Object.entries(acc.components).map(([key,values])=>[key,values[values.length-1]])
+  )};
 
   const perp=solvePerpetual(acc.bal, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry,pensionOptions);
   let summary='';
   let pensionSeries=[];
+  let pensionSimulation;
   let payout=W;
 
   if(mode==='A'){
-    const s=simPension(acc.bal, W, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry,pensionOptions);
+    const s=simPension(acc.bal, W, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry,displayOptions);
+    pensionSimulation=s;
     pensionSeries=s.series;
     if(s.zeroAt<0){
       res.push({lbl:'Снимая '+fmt(W)+'/мес'+workTxt, val:'хватит до '+fmtAge(pensionAge+horizon/12), cls:'ok',note:baseLabel+', с индексацией выплат'});
@@ -371,7 +434,8 @@ function render(){
   }else if(mode==='B'){
     payout=perp;
     res.push({lbl:'Бессрочная выплата после инфляции', val:fmt(perp)+'/мес', cls:perp>0?'ok':'warn',note:baseLabel});
-    pensionSeries=simPension(acc.bal, perp, retP, pMonthly, effTax, workMonths, Math.max(40*12,workMonths+24), pStartMonthIdx, carry,pensionOptions).series;
+    pensionSimulation=simPension(acc.bal, perp, retP, pMonthly, effTax, workMonths, Math.max(40*12,workMonths+24), pStartMonthIdx, carry,displayOptions);
+    pensionSeries=pensionSimulation.series;
     summary='Выплата '+fmt(perp)+'/мес '+baseLabel+' индексируется вместе с ценами. После завершения взносов и вычетов покупательная способность оставшегося капитала не уменьшается при заданных постоянных ставках.'+(workOn?' До завершения работы баланс меняется с учётом взносов и снятий.':'');
   }else{
     const nMonths=Math.max(Math.round((zeroAge-pensionAge)*12),1);
@@ -379,7 +443,8 @@ function render(){
     payout=W2;
     res.push({lbl:'Можно снимать до '+zeroAge+' лет', val:fmt(W2)+'/мес', cls:'ok',note:baseLabel+', с индексацией выплат'});
     res.push({lbl:'Период выплат', val:(nMonths/12).toLocaleString('ru-RU',{maximumFractionDigits:1})+' лет'});
-    pensionSeries=simPension(acc.bal, W2, retP, pMonthly, effTax, Math.min(workMonths,nMonths), nMonths, pStartMonthIdx, carry,pensionOptions).series;
+    pensionSimulation=simPension(acc.bal, W2, retP, pMonthly, effTax, Math.min(workMonths,nMonths), nMonths, pStartMonthIdx, carry,displayOptions);
+    pensionSeries=pensionSimulation.series;
     summary='Выплата '+fmt(W2)+'/мес '+baseLabel+' растёт вместе с ценами и расходует капитал к концу выбранного периода. Для сравнения: бессрочная выплата — '+fmt(perp)+'/мес в тех же ценах.';
   }
   res.push({lbl:'Первая выплата в будущих рублях',val:fmt(payout*priceFactor(inflation,monthsAcc+1))+'/мес',note:'Далее растёт ежемесячно с инфляцией'});
@@ -402,18 +467,49 @@ function render(){
   });
   const CS=chartState;
   const realUnits=$('chartUnits').value==='real';
-  const displayVals=realUnits?vals.map((v,i)=>v/priceFactor(inflation,i)):vals;
-  CS.data={ages, vals:displayVals, splitIdx:acc.series.length-1, startDate:startDateObj,unitLabel:realUnits?baseLabel:'в будущих рублях'};
+  const componentSeries=Object.fromEntries(Object.entries(acc.components).map(([key,values])=>
+    [key,values.concat(pensionSimulation.components[key].slice(1))]));
+  const metrics=buildChartMetrics(vals,componentSeries,inflation,realUnits);
+  CS.data={ages,...metrics,splitIdx:acc.series.length-1,startDate:startDateObj,unitLabel:realUnits?baseLabel:'в будущих рублях'};
+  if(CS.selectedMonth==null) CS.selectedMonth=monthsAcc;
+  CS.selectedMonth=Math.min(CS.selectedMonth,vals.length-1);
+  $('chartMonth').max=vals.length-1;
+  $('chartMonth').value=CS.selectedMonth;
   if(CS.sel && CS.sel[1]>=vals.length) CS.sel=null;
   if(CS.hover!=null && CS.hover>=vals.length) CS.hover=null;
   drawChart(); updateInfo();
 }
 
-const chartState={view:{a:0,b:1}, sel:null, hover:null, data:null, drag:null, _m:null};
+const chartState={view:{a:0,b:1}, sel:null, hover:null, selectedMonth:null, data:null, drag:null, _m:null};
 
 function fmtAge(a){
   const y=Math.floor(a+1e-6), mo=Math.round((a-y)*12);
   return mo>0 ? y+' л '+mo+' мес' : y+' лет';
+}
+
+function chartDate(data,index){
+  const d=new Date(data.startDate),day=d.getDate();
+  d.setDate(1);d.setMonth(d.getMonth()+index);
+  d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate()));
+  return d;
+}
+
+function updateBreakdown(){
+  const st=chartState,D=st.data;if(!D)return;
+  const i=st.sel?st.sel[1]:(st.hover!=null?st.hover:st.selectedMonth);
+  const label=index=>chartDate(D,index).toLocaleDateString('ru-RU',{month:'long',year:'numeric'})+' · '+fmtAge(D.ages[index]);
+  $('chartMonthV').textContent=fmtAge(D.ages[st.selectedMonth]);
+  $('chartMonth').setAttribute('aria-valuetext',label(st.selectedMonth));
+  $('breakdownDate').textContent=(st.sel?'На конец периода: ':'')+label(i)+' · остаток '+fmt(D.vals[i])+' '+D.unitLabel;
+  const share=value=>D.vals[i]>0?(value/D.vals[i]*100).toLocaleString('ru-RU',{maximumFractionDigits:1})+'% остатка':'Остаток исчерпан';
+  const cards=[
+    {label:'Собственные деньги в остатке',value:fmt(D.components.own[i]),note:share(D.components.own[i]),color:'#60a5fa'},
+    {label:'Вычеты в остатке',value:fmt(D.components.refunds[i]),note:share(D.components.refunds[i]),color:'#c4b5fd'},
+    {label:'Проценты / доход в остатке',value:fmt(D.components.interest[i]),note:share(D.components.interest[i]),color:'#2dd4bf'},
+    {label:'Накопленный рост цен',value:'+'+D.inflationPct[i].toLocaleString('ru-RU',{maximumFractionDigits:1})+'%',note:'С начала расчёта',color:'#fbbf24'},
+    {label:'Обесценение остатка',value:fmt(D.inflationGap[i]),note:'Номинальный остаток '+fmt(D.nominal[i])+' → '+fmt(D.real[i])+' в базовых ценах',color:'#fb923c'}
+  ];
+  $('chartBreakdown').innerHTML=cards.map(c=>'<div class="res" style="--metric-color:'+c.color+'"><div class="lbl">'+c.label+'</div><div class="val">'+c.value+'</div><div class="note">'+c.note+'</div></div>').join('');
 }
 
 function drawChart(){
@@ -425,7 +521,8 @@ function drawChart(){
   const ctx=canvas.getContext('2d');
   ctx.scale(dpr,dpr); ctx.clearRect(0,0,W,H);
 
-  const padL=56, padR=14, padT=14, padB=32;
+  const showInflation=$('showInflation').checked;
+  const padL=56, padR=showInflation?64:14, padT=24, padB=32;
   const pw=W-padL-padR, ph=H-padT-padB;
   const n=D.vals.length;
   let i0=Math.max(0,Math.round(st.view.a*(n-1)));
@@ -437,6 +534,8 @@ function drawChart(){
   const Xa=age=>padL+pw*(age-a0)/(a1-a0);
   const X=i=>Xa(D.ages[i]);
   const Y=v=>padT+ph*(1-v/maxV);
+  const maxInflation=Math.max(1,D.inflationPct[i1]*1.05);
+  const YInflation=v=>padT+ph*(1-v/maxInflation);
   st._m={i0,i1,a0,a1,padL,pw,padT,ph};
 
   // сетка + подписи Y
@@ -448,6 +547,15 @@ function drawChart(){
     const v=maxV*s/5, y=Y(v);
     ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
     ctx.fillText((v/1e6).toLocaleString('ru-RU',{maximumFractionDigits:2})+' млн', padL-8, y+4);
+  }
+  if(showInflation){
+    ctx.fillStyle='#fbbf24'; ctx.textAlign='left';
+    for(let s=0;s<=5;s++){
+      const v=maxInflation*s/5;
+      ctx.fillText(v.toLocaleString('ru-RU',{maximumFractionDigits:1,notation:v>=10000?'compact':'standard'})+'%',W-padR+8,YInflation(v)+4);
+    }
+    ctx.fillText('Цены, %',W-padR+8,12);
+    ctx.fillStyle='#8fa5c0';
   }
   // подписи X — целые возрасты
   ctx.textAlign='center';
@@ -469,19 +577,28 @@ function drawChart(){
     }
   }
 
-  // линия и заливка по сегментам
-  function seg(from,to,color,fill){
-    if(to<=from) return;
+  // Слои остатка: каждый слой — самостоятельная составляющая, верх — баланс.
+  let lower=D.vals.map(()=>0);
+  const layers=[['own','#60a5fa','rgba(96,165,250,.48)'],['refunds','#c4b5fd','rgba(196,181,253,.65)'],['interest','#2dd4bf','rgba(45,212,191,.48)']];
+  for(const [key,color,fill] of layers){
+    const upper=lower.map((v,i)=>v+D.components[key][i]);
     ctx.beginPath();
-    ctx.moveTo(X(from),Y(D.vals[from]));
-    for(let i=from+1;i<=to;i++) ctx.lineTo(X(i),Y(D.vals[i]));
-    ctx.strokeStyle=color; ctx.lineWidth=2.5; ctx.stroke();
-    ctx.lineTo(X(to),padT+ph); ctx.lineTo(X(from),padT+ph); ctx.closePath();
+    ctx.moveTo(X(i0),Y(upper[i0]));
+    for(let i=i0+1;i<=i1;i++) ctx.lineTo(X(i),Y(upper[i]));
+    for(let i=i1;i>=i0;i--) ctx.lineTo(X(i),Y(lower[i]));
+    ctx.closePath();
     ctx.fillStyle=fill; ctx.fill();
+    ctx.beginPath();ctx.moveTo(X(i0),Y(upper[i0]));
+    for(let i=i0+1;i<=i1;i++) ctx.lineTo(X(i),Y(upper[i]));
+    ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.stroke();
+    lower=upper;
   }
   const sp=D.splitIdx;
-  if(sp>i0) seg(i0,Math.min(sp,i1),'#2dd4bf','rgba(45,212,191,.15)');
-  if(i1>sp) seg(Math.max(sp,i0),i1,'#60a5fa','rgba(96,165,250,.15)');
+  if(showInflation){
+    ctx.beginPath();ctx.moveTo(X(i0),YInflation(D.inflationPct[i0]));
+    for(let i=i0+1;i<=i1;i++) ctx.lineTo(X(i),YInflation(D.inflationPct[i]));
+    ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.stroke();ctx.setLineDash([]);
+  }
 
   // пунктир выхода на пенсию
   if(sp>i0&&sp<i1){
@@ -489,11 +606,13 @@ function drawChart(){
     ctx.setLineDash([4,4]);
     ctx.beginPath(); ctx.moveTo(X(sp),padT); ctx.lineTo(X(sp),padT+ph); ctx.stroke();
     ctx.setLineDash([]);
+    ctx.fillStyle='#8fa5c0';ctx.textAlign='center';ctx.fillText('Пенсия',X(sp),12);
   }
 
   // прицел
-  if(st.hover!=null && st.hover>=i0 && st.hover<=i1){
-    const hx=X(st.hover), hy=Y(D.vals[st.hover]);
+  const focus=st.sel?st.sel[1]:(st.hover!=null?st.hover:st.selectedMonth);
+  if(focus!=null && focus>=i0 && focus<=i1){
+    const hx=X(focus), hy=Y(D.vals[focus]);
     ctx.strokeStyle='rgba(232,238,247,.45)';
     ctx.setLineDash([4,3]);
     ctx.beginPath(); ctx.moveTo(hx,padT); ctx.lineTo(hx,padT+ph); ctx.stroke();
@@ -501,13 +620,16 @@ function drawChart(){
     ctx.setLineDash([]);
     ctx.beginPath(); ctx.arc(hx,hy,4.5,0,Math.PI*2);
     ctx.fillStyle='#fff'; ctx.fill();
-    ctx.lineWidth=2; ctx.strokeStyle=st.hover<sp?'#2dd4bf':'#60a5fa'; ctx.stroke();
+    ctx.lineWidth=2; ctx.strokeStyle='#2dd4bf'; ctx.stroke();
     ctx.lineWidth=1;
 
     // бейджи-легенда на осях
-    let xTxt=fmtAge(D.ages[st.hover]);
+    if(showInflation){
+      ctx.beginPath();ctx.arc(hx,YInflation(D.inflationPct[focus]),3.5,0,Math.PI*2);ctx.fillStyle='#fbbf24';ctx.fill();
+    }
+    let xTxt=fmtAge(D.ages[focus]);
     if(D.startDate){
-      const d=new Date(D.startDate); d.setMonth(d.getMonth()+st.hover);
+      const d=chartDate(D,focus);
       xTxt=d.toLocaleDateString('ru-RU',{month:'short',year:'numeric'}).replace(' г.','');
     }
     function badge(text,cx,cy,anchorRight){
@@ -524,7 +646,7 @@ function drawChart(){
       ctx.fillStyle='#e8eef7'; ctx.textAlign='center';
       ctx.fillText(text,x+bw/2,y+13);
     }
-    badge(fmtM(D.vals[st.hover]), padL-2, hy, true); // слева — баланс
+    badge(fmtM(D.vals[focus]), padL-2, hy, true); // слева — баланс
     badge(xTxt, hx, H-11);                            // снизу — возраст/дата
   }
 }
@@ -532,6 +654,7 @@ function drawChart(){
 function updateInfo(){
   const st=chartState, D=st.data, el=$('chartInfo');
   if(!D) return;
+  updateBreakdown();
   const dflt='Суммы '+D.unitLabel+'. Курсор — изменение баланса · тянуть мышью — период · колесо — масштаб · Shift+мышь / ◀ ▶ — двигать график · двойной клик — сброс. Изменение баланса включает взносы, вычеты и снятия; это не доходность инвестиций.';
   if(st.sel && st.sel[1]-st.sel[0]>1){
     const [i,j]=st.sel;
@@ -552,7 +675,7 @@ function updateInfo(){
     }
     let when=fmtAge(D.ages[i]);
     if(D.startDate){
-      const d=new Date(D.startDate); d.setMonth(d.getMonth()+i);
+      const d=chartDate(D,i);
       when=d.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})+' ('+when+')';
     }
     el.innerHTML='<b>'+when+'</b>: '+fmtM(D.vals[i])+rate+' · '+D.unitLabel+'; с учётом взносов и снятий';
@@ -573,6 +696,12 @@ function updateInfo(){
     const i=Math.round((age-D.ages[0])*12);
     return Math.max(0,Math.min(D.vals.length-1,i));
   }
+  cv.addEventListener('click',e=>{
+    if(chartState.sel)return;
+    const i=idxAt(e.clientX);if(i==null)return;
+    chartState.selectedMonth=i;$('chartMonth').value=i;
+    drawChart();updateInfo();
+  });
   function shiftView(df){ // сдвиг видимого окна на df (доля всего диапазона)
     const v=chartState.view, span=v.b-v.a;
     let a=v.a+df, b=v.b+df;
@@ -653,6 +782,12 @@ function updateInfo(){
   $('zReset').onclick=()=>{chartState.view={a:0,b:1}; chartState.sel=null; drawChart(); updateInfo();};
 })();
 window.addEventListener('resize',()=>{drawChart();});
+$('chartMonth').addEventListener('input',()=>{
+  chartState.selectedMonth=+$('chartMonth').value;
+  chartState.hover=null;chartState.sel=null;
+  drawChart();updateInfo();
+});
+$('showInflation').addEventListener('input',()=>{drawChart();});
 
 function setMode(m){
   mode=m;
