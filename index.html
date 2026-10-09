@@ -14,6 +14,9 @@
   h1{font-size:26px; margin-bottom:6px;}
   .sub{color:var(--muted); margin-bottom:24px; font-size:14px;}
   .grid{display:grid; grid-template-columns:340px 1fr; gap:20px; align-items:start;}
+  .grid > div{min-width:0;}
+  .chart-toolbar{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;}
+  @media(max-width:480px){body{padding:12px;} .card,.chart-wrap{padding:16px;} h1{font-size:23px;}}
   @media(max-width:900px){.grid{grid-template-columns:1fr;}}
   .card{background:var(--card); border-radius:14px; padding:20px;}
   .card h2{font-size:15px; text-transform:uppercase; letter-spacing:.5px; color:var(--accent); margin-bottom:16px;}
@@ -81,7 +84,7 @@
         <input type="number" id="monthly" value="17000" step="1000" min="0">
       </div>
       <div class="field">
-        <label>Доходность, % годовых <b id="retV"></b></label>
+        <label>Доходность до инфляции <b id="retV"></b></label>
         <input type="range" id="ret" min="1" max="25" value="10" step="0.5">
       </div>
       <div class="field">
@@ -97,6 +100,17 @@
     </div>
 
     <div class="card" style="margin-top:20px;">
+      <h2>Инфляция</h2>
+      <div class="field">
+        <label for="inflation">Рост цен, % годовых <b id="inflationV"></b></label>
+        <input type="range" id="inflation" min="0" max="25" value="6" step="0.5" aria-describedby="inflationHint">
+      </div>
+      <label class="toggle"><input type="checkbox" id="indexContributions"> Повышать взносы раз в год на инфляцию</label>
+      <div class="hint" id="inflationHint">6% — пример сценария, не прогноз. При 0% расчёт идёт без инфляции. Без индексации взнос в рублях остаётся прежним.</div>
+      <div class="hint">Пенсионные выплаты указаны в ценах начала расчёта и растут каждый месяц вслед за ценами. В точном режиме базой служит дата первого взноса.</div>
+    </div>
+
+    <div class="card" style="margin-top:20px;">
       <h2>Фаза пенсии</h2>
       <div class="mode-tabs">
         <button id="mA" class="active">Забираю N ₽/мес — на сколько хватит?</button>
@@ -104,7 +118,7 @@
         <button id="mC">Обнулить к возрасту X — сколько в месяц?</button>
       </div>
       <div class="field" id="fWithdraw">
-        <label>Снимаю в месяц, ₽</label>
+        <label for="withdraw">Снимаю в месяц, в сегодняшних ₽</label>
         <input type="number" id="withdraw" value="80000" step="5000" min="0">
       </div>
       <div class="field" id="fZeroAge" style="display:none;">
@@ -112,7 +126,7 @@
         <input type="range" id="zeroAge" min="55" max="100" value="85">
       </div>
       <div class="field">
-        <label>Доходность на пенсии, % годовых <b id="retPV"></b></label>
+        <label>Доходность на пенсии до инфляции <b id="retPV"></b></label>
         <input type="range" id="retP" min="1" max="20" value="8" step="0.5">
       </div>
       <label class="toggle" style="margin-bottom:10px;"><input type="checkbox" id="workOn"> Продолжаю работать на пенсии</label>
@@ -133,7 +147,11 @@
       <div class="hint" id="summary"></div>
     </div>
     <div class="chart-wrap">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="field">
+        <label for="chartUnits">Суммы на графике</label>
+        <select id="chartUnits"><option value="real" selected>В ценах начала расчёта</option><option value="nominal">В будущих рублях</option></select>
+      </div>
+      <div class="chart-toolbar">
         <div class="hint" style="margin-top:0;"><span style="color:#2dd4bf;">●</span> накопление &nbsp; <span style="color:#60a5fa;">●</span> пенсия (снятие)</div>
         <div>
           <button class="zbtn" id="pLeft" title="Сдвинуть влево">◀</button>
@@ -149,7 +167,7 @@
   </div>
 </div>
 
-<footer>Расчёты приблизительные, номинальные (без учёта инфляции), не являются финансовым советом. НДФЛ при снятии не учитывается (по ИИС-3 доход до 30 млн ₽ освобождён при соблюдении срока владения).</footer>
+<footer>Расчёты приблизительные: доходность и инфляция постоянны, рыночные колебания и комиссии не моделируются. Сумма в ценах начала расчёта = будущая сумма / (1 + инфляция)<sup>число лет</sup>. Налоговая модель упрощена: лимит взносов для вычета не индексируется, НДФЛ при снятии не учитывается. Это сценарий, а не гарантия дохода.</footer>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -166,10 +184,15 @@ const fmtM=n=>{
 let mode='A';
 
 function monthlyRate(annual){ return Math.pow(1+annual,1/12)-1; }
+function priceFactor(inflation, months){ return Math.pow(1+inflation,months/12); }
+function contributionAt(monthly, inflation, months, indexed){
+  return monthly*(indexed?Math.pow(1+inflation,Math.floor(months/12)):1);
+}
 
 // Фаза накопления: помесячно; вычет за прошлый календарный год приходит в январе.
 // startMonthIdx — календарный месяц первого взноса (0=январь).
-function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, startCap){
+function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, startCap, options={}){
+  const {inflation=0, indexContributions=false}=options;
   const m=monthlyRate(annual);
   let bal=startCap||0, contrib=0, refunds=0, curYear=0;
   const series=[bal];
@@ -182,8 +205,9 @@ function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, 
       }
       curYear=0;
     }
-    bal=(bal+monthly)*(1+m);
-    contrib+=monthly; curYear+=monthly;
+    const payment=contributionAt(monthly,inflation,i,indexContributions);
+    bal=(bal+payment)*(1+m);
+    contrib+=payment; curYear+=payment;
     series.push(bal);
   }
   return {bal, contrib, refunds, series, carry:curYear};
@@ -192,7 +216,11 @@ function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, 
 // Универсальный симулятор пенсии (помесячно, календарный).
 // workMonths — сколько месяцев ещё работаем: идут взносы, а вычеты приходят в январе.
 // startMonthIdx — календарный месяц начала пенсии; carry — взносы последнего года накоплений.
-function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry){
+// W — ежемесячная выплата в ценах начала всего расчёта.
+// Взносы на пенсии поступают после начисления дохода за месяц,
+// как в исходной модели; снятие — в конце месяца, по индексу цен на эту дату.
+function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry, options={}){
+  const {inflation=0, elapsedMonths=0, indexContributions=false}=options;
   const m=monthlyRate(annual);
   let b=bal, zeroAt=-1, balAtWorkEnd=bal, curYear=carry||0;
   const series=[bal];
@@ -204,9 +232,11 @@ function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths,
         curYear=0;
       }
       const working=i<=workMonths;
-      b=b*(1+m)+(working?monthly:0)-W;
-      if(working) curYear+=monthly;
-      if(b<=0){zeroAt=i; b=0;}
+      const payment=working?contributionAt(monthly,inflation,elapsedMonths+i-1,indexContributions):0;
+      const withdrawal=W*priceFactor(inflation,elapsedMonths+i);
+      b=b*(1+m)+payment-withdrawal;
+      if(working) curYear+=payment;
+      if(b<0 || (b<=1e-7 && withdrawal>0)){zeroAt=i; b=0;}
     }
     if(i===workMonths) balAtWorkEnd=b;
     series.push(b);
@@ -214,35 +244,55 @@ function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths,
   return {end:b, series, zeroAt, balAtWorkEnd};
 }
 
-// Максимальное W, при котором капитал не тает (двоичный поиск)
-function solvePerpetual(bal, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry){
-  let lo=0, hi=bal*(monthlyRate(annual)+0.02)+monthly+200000;
+// После завершения работы и последнего январского вычета реальный капитал
+// должен покрывать выплаты реальным доходом бессрочно, а не только до 100 лет.
+function solvePerpetual(bal, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry, options={}){
+  const {inflation=0, elapsedMonths=0}=options;
+  const realMonthly=monthlyRate((1+annual)/(1+inflation)-1);
+  if(realMonthly<=0) return 0;
+  const tail=Math.max(workMonths,0)+13;
+  const sustainable=W=>{
+    const s=simPension(bal,W,annual,monthly,taxRate,workMonths,tail,startMonthIdx,carry,options);
+    const realEnd=s.end/priceFactor(inflation,elapsedMonths+tail);
+    return s.zeroAt<0 && realEnd*realMonthly>=W;
+  };
+  let lo=0, hi=Math.max(1,bal+monthly+200000);
+  while(sustainable(hi)) hi*=2;
   for(let k=0;k<60;k++){
     const mid=(lo+hi)/2;
-    const s=simPension(bal, mid, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry);
-    if(s.zeroAt<0 && s.end>=s.balAtWorkEnd*0.999) lo=mid; else hi=mid;
+    if(sustainable(mid)) lo=mid; else hi=mid;
   }
   return lo;
 }
 
 // Максимальное W, при котором счёт обнуляется ровно к nMonths
-function solveAnnuity(bal, annual, monthly, taxRate, workMonths, nMonths, startMonthIdx, carry){
-  let lo=0, hi=bal+monthly*nMonths+1e7;
+function solveAnnuity(bal, annual, monthly, taxRate, workMonths, nMonths, startMonthIdx, carry, options={}){
+  const affordable=W=>{
+    const s=simPension(bal,W,annual,monthly,taxRate,Math.min(workMonths,nMonths),nMonths,startMonthIdx,carry,options);
+    return s.zeroAt<0 && s.end>0;
+  };
+  let lo=0, hi=Math.max(1,bal+monthly*nMonths+1e7);
+  while(affordable(hi)) hi*=2;
   for(let k=0;k<60;k++){
     const mid=(lo+hi)/2;
-    const s=simPension(bal, mid, annual, monthly, taxRate, Math.min(workMonths,nMonths), nMonths, startMonthIdx, carry);
-    if(s.zeroAt<0 && s.end>0) lo=mid; else hi=mid;
+    if(affordable(mid)) lo=mid; else hi=mid;
   }
   return lo;
 }
 
 function render(){
   const ageNow=+$('ageNow').value, ageRet=+$('ageRet').value;
-  const monthly=+$('monthly').value||0;
+  const monthly=Math.max(0,+$('monthly').value||0);
   const ret=+$('ret').value/100, retP=+$('retP').value/100;
+  const inflation=+$('inflation').value/100;
+  const indexContributions=$('indexContributions').checked;
   const taxRate=+$('tax').value;
   const reinvest=$('reinvest').checked;
-  const W=+$('withdraw').value||0;
+  const W=Math.max(0,+$('withdraw').value||0);
+  $('zeroAge').min=ageRet+1;
+  $('workAge').min=ageRet+1;
+  if(+$('zeroAge').value<=ageRet) $('zeroAge').value=ageRet+1;
+  if(+$('workAge').value<=ageRet) $('workAge').value=ageRet+1;
   const zeroAge=+$('zeroAge').value;
   const workOn=$('workOn').checked;
   const workAge=+$('workAge').value;
@@ -251,12 +301,13 @@ function render(){
   $('ageRetV').textContent=ageRet+' лет';
   $('retV').textContent=$('ret').value+'%';
   $('retPV').textContent=$('retP').value+'%';
+  $('inflationV').textContent=$('inflation').value+'%';
   $('zeroAgeV').textContent=zeroAge+' лет';
   $('workAgeV').textContent=workAge+' лет';
   $('fWorkAge').style.display=workOn?'':'none';
   $('workHint').style.display=workOn?'':'none';
 
-  const startCap=+$('startCap').value||0;
+  const startCap=Math.max(0,+$('startCap').value||0);
   const precise=$('precise').checked;
   $('fPrecise').style.display=precise?'':'none';
   let ageStart=ageNow, monthsAcc=Math.max(ageRet-ageNow,0)*12, startDateObj=new Date();
@@ -273,54 +324,72 @@ function render(){
     }
   }
   const years=Math.round(monthsAcc/12*10)/10;
-  const acc=accumulate(monthsAcc, startMonthIdx, monthly, ret, taxRate, reinvest, startCap);
+  const pensionAge=ageStart+monthsAcc/12;
+  const acc=accumulate(monthsAcc, startMonthIdx, monthly, ret, taxRate, reinvest, startCap,{inflation,indexContributions});
+  const factor=priceFactor(inflation,monthsAcc);
+  const baseLabel=precise?'в ценах '+startDateObj.toLocaleDateString('ru-RU'):'в сегодняшних рублях';
+  document.querySelector('label[for="withdraw"]').textContent='Снимаю в месяц, '+baseLabel;
+  const realReturn=(1+ret)/(1+inflation)-1;
+  const realPensionReturn=(1+retP)/(1+inflation)-1;
+  const pct=n=>(n*100).toLocaleString('ru-RU',{maximumFractionDigits:2})+'%';
 
   const res=[];
-  res.push({lbl:'Накоплено к '+ageRet+' годам', val:fmtM(acc.bal), cls:'big'});
-  res.push({lbl:'Свои взносы за '+years+' лет'+(startCap>0?' + старт':''), val:fmtM(acc.contrib+startCap)});
-  res.push({lbl:'Реинвестировано вычетов', val:fmtM(acc.refunds)});
-  res.push({lbl:'Доход от инвестиций', val:fmtM(acc.bal-acc.contrib-acc.refunds-startCap), cls:'ok'});
+  res.push({lbl:'Капитал к '+fmtAge(pensionAge), val:fmtM(acc.bal), cls:'big',note:'Будущие рубли на счёте'});
+  res.push({lbl:'Покупательная способность капитала',val:fmtM(acc.bal/factor),cls:'big',note:baseLabel+' · цены вырастут в '+factor.toLocaleString('ru-RU',{maximumFractionDigits:2})+' раза'});
+  res.push({lbl:'Свои взносы за '+years+' лет'+(startCap>0?' + старт':''), val:fmtM(acc.contrib+startCap),note:'Сумма фактических взносов без пересчёта цен'});
+  res.push({lbl:'Реинвестировано вычетов', val:fmtM(acc.refunds),note:'Номинальная сумма поступлений'});
+  res.push({lbl:'Доход от инвестиций до инфляции', val:fmtM(acc.bal-acc.contrib-acc.refunds-startCap), cls:'ok'});
+  res.push({lbl:'Доходность после инфляции',val:pct(realReturn)+' / '+pct(realPensionReturn),cls:realReturn<0||realPensionReturn<0?'warn':'ok',note:'Накопление / пенсия, годовых'});
 
   const effTax=reinvest?taxRate:0;
-  const workMonths=workOn?Math.max(workAge-ageRet,0)*12:0;
+  const workMonths=workOn?Math.max(Math.round((workAge-pensionAge)*12),0):0;
   const pMonthly=workOn?monthly:0; // взносы на пенсии — только если работаем
   const pStartMonthIdx=(startMonthIdx+monthsAcc)%12;
   const carry=(reinvest&&monthsAcc>0)?acc.carry:0;
-  const horizon=Math.max((100-ageRet)*12,12);
+  const horizon=Math.max(Math.round((100-pensionAge)*12),12);
   const workTxt=workOn?' (работаю до '+workAge+')':'';
+  const pensionOptions={inflation,indexContributions,elapsedMonths:monthsAcc};
 
-  const perp=solvePerpetual(acc.bal, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry);
+  const perp=solvePerpetual(acc.bal, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry,pensionOptions);
   let summary='';
   let pensionSeries=[];
+  let payout=W;
 
   if(mode==='A'){
-    const s=simPension(acc.bal, W, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry);
+    const s=simPension(acc.bal, W, retP, pMonthly, effTax, workMonths, horizon, pStartMonthIdx, carry,pensionOptions);
     pensionSeries=s.series;
     if(s.zeroAt<0){
-      res.push({lbl:'Снимая '+fmt(W)+'/мес'+workTxt, val:'хватит до 100 лет и дальше', cls:'ok'});
-      summary='Снятие '+fmt(W)+'/мес не истощает счёт — предел «вечной ренты» в этом сценарии '+fmt(perp)+'/мес.';
+      res.push({lbl:'Снимая '+fmt(W)+'/мес'+workTxt, val:'хватит до '+fmtAge(pensionAge+horizon/12), cls:'ok',note:baseLabel+', с индексацией выплат'});
+      summary='За показанный период счёт не обнуляется. Это не означает, что выплат хватит навсегда. Бессрочная выплата с сохранением покупательной способности капитала после завершения взносов и вычетов — '+fmt(perp)+'/мес '+baseLabel+'.';
     }else{
       const yrs=Math.floor(s.zeroAt/12), mos=s.zeroAt%12;
-      const endAge=ageRet+s.zeroAt/12;
-      res.push({lbl:'Снимая '+fmt(W)+'/мес'+workTxt, val:yrs+' лет '+mos+' мес', cls:s.zeroAt<20*12?'warn':''});
-      res.push({lbl:'Деньги закончатся в возрасте', val:'~'+Math.round(endAge)+' лет', cls:endAge<80?'warn':''});
-      summary='Депозит растает за '+yrs+' лет '+mos+' мес. Чтобы остаток не сгорал, снимайте не больше '+fmt(perp)+'/мес — это «вечная рента» при '+$('retP').value+'% годовых'+(workOn?' с учётом взносов и вычетов до '+workAge+' лет':'')+'.';
+      const endAge=pensionAge+s.zeroAt/12;
+      res.push({lbl:'Снимая '+fmt(W)+'/мес'+workTxt, val:yrs+' лет '+mos+' мес', cls:s.zeroAt<20*12?'warn':'',note:baseLabel+', с индексацией выплат'});
+      res.push({lbl:'Полной выплаты уже не хватит в возрасте', val:fmtAge(endAge), cls:endAge<80?'warn':''});
+      summary='Счёт исчерпается через '+yrs+' лет '+mos+' мес. Бессрочная выплата после инфляции в этом сценарии — '+fmt(perp)+'/мес '+baseLabel+'.';
     }
   }else if(mode==='B'){
-    res.push({lbl:'Вечная рента (капитал не тает)', val:fmt(perp)+'/мес', cls:'ok'});
-    pensionSeries=simPension(acc.bal, perp, retP, pMonthly, effTax, workMonths, 40*12, pStartMonthIdx, carry).series;
-    summary='Снимая '+fmt(perp)+' в месяц, вы не трогаете тело капитала — '+fmtM(acc.bal)+' остаётся наследникам. Любая сумма выше начнёт «проедать» депозит.'+(workOn?' Учтены взносы и вычеты, пока вы работаете до '+workAge+' лет.':'');
+    payout=perp;
+    res.push({lbl:'Бессрочная выплата после инфляции', val:fmt(perp)+'/мес', cls:perp>0?'ok':'warn',note:baseLabel});
+    pensionSeries=simPension(acc.bal, perp, retP, pMonthly, effTax, workMonths, Math.max(40*12,workMonths+24), pStartMonthIdx, carry,pensionOptions).series;
+    summary='Выплата '+fmt(perp)+'/мес '+baseLabel+' индексируется вместе с ценами. После завершения взносов и вычетов покупательная способность оставшегося капитала не уменьшается при заданных постоянных ставках.'+(workOn?' До завершения работы баланс меняется с учётом взносов и снятий.':'');
   }else{
-    const nMonths=Math.max((zeroAge-ageRet)*12,1);
-    const W2=solveAnnuity(acc.bal, retP, pMonthly, effTax, workMonths, nMonths, pStartMonthIdx, carry);
-    res.push({lbl:'Можно снимать до '+zeroAge+' лет', val:fmt(W2)+'/мес', cls:'ok'});
-    res.push({lbl:'Период выплат', val:(zeroAge-ageRet)+' лет'});
-    pensionSeries=simPension(acc.bal, W2, retP, pMonthly, effTax, Math.min(workMonths,nMonths), nMonths, pStartMonthIdx, carry).series;
-    summary='Аннуитет: снимая '+fmt(W2)+'/мес, вы обнулите счёт ровно к '+zeroAge+' годам. Для сравнения, вечная рента (капитал не тает) — '+fmt(perp)+'/мес.'+(workOn?' Учтены взносы и вычеты до '+Math.min(workAge,zeroAge)+' лет.':'');
+    const nMonths=Math.max(Math.round((zeroAge-pensionAge)*12),1);
+    const W2=solveAnnuity(acc.bal, retP, pMonthly, effTax, workMonths, nMonths, pStartMonthIdx, carry,pensionOptions);
+    payout=W2;
+    res.push({lbl:'Можно снимать до '+zeroAge+' лет', val:fmt(W2)+'/мес', cls:'ok',note:baseLabel+', с индексацией выплат'});
+    res.push({lbl:'Период выплат', val:(nMonths/12).toLocaleString('ru-RU',{maximumFractionDigits:1})+' лет'});
+    pensionSeries=simPension(acc.bal, W2, retP, pMonthly, effTax, Math.min(workMonths,nMonths), nMonths, pStartMonthIdx, carry,pensionOptions).series;
+    summary='Выплата '+fmt(W2)+'/мес '+baseLabel+' растёт вместе с ценами и расходует капитал к концу выбранного периода. Для сравнения: бессрочная выплата — '+fmt(perp)+'/мес в тех же ценах.';
+  }
+  res.push({lbl:'Первая выплата в будущих рублях',val:fmt(payout*priceFactor(inflation,monthsAcc+1))+'/мес',note:'Далее растёт ежемесячно с инфляцией'});
+  if(realPensionReturn<=0){
+    if(mode==='B') summary='Положительная бессрочная выплата с сохранением покупательной способности капитала невозможна. ';
+    summary+=' Доходность на пенсии '+(realPensionReturn<0?'ниже инфляции: после завершения пополнений покупательная способность капитала падает даже без снятий.':'равна инфляции: положительная бессрочная выплата без расходования капитала невозможна.');
   }
 
   $('results').innerHTML=res.map(r=>
-    '<div class="res"><div class="lbl">'+r.lbl+'</div><div class="val '+(r.cls||'')+'">'+r.val+'</div></div>'
+    '<div class="res"><div class="lbl">'+r.lbl+'</div><div class="val '+(r.cls||'')+'">'+r.val+'</div>'+(r.note?'<div class="note">'+r.note+'</div>':'')+'</div>'
   ).join('');
   $('summary').textContent=summary;
 
@@ -332,7 +401,9 @@ function render(){
     ages.push(ageStart+(monthsAcc+i)/12); vals.push(v);
   });
   const CS=chartState;
-  CS.data={ages, vals, splitIdx:acc.series.length-1, startDate:startDateObj};
+  const realUnits=$('chartUnits').value==='real';
+  const displayVals=realUnits?vals.map((v,i)=>v/priceFactor(inflation,i)):vals;
+  CS.data={ages, vals:displayVals, splitIdx:acc.series.length-1, startDate:startDateObj,unitLabel:realUnits?baseLabel:'в будущих рублях'};
   if(CS.sel && CS.sel[1]>=vals.length) CS.sel=null;
   if(CS.hover!=null && CS.hover>=vals.length) CS.hover=null;
   drawChart(); updateInfo();
@@ -461,7 +532,7 @@ function drawChart(){
 function updateInfo(){
   const st=chartState, D=st.data, el=$('chartInfo');
   if(!D) return;
-  const dflt='Курсор — точка и скорость роста · тянуть мышью — статистика за период · колесо — масштаб · Shift+мышь / ◀ ▶ — двигать график · двойной клик — сброс.';
+  const dflt='Суммы '+D.unitLabel+'. Курсор — изменение баланса · тянуть мышью — период · колесо — масштаб · Shift+мышь / ◀ ▶ — двигать график · двойной клик — сброс. Изменение баланса включает взносы, вычеты и снятия; это не доходность инвестиций.';
   if(st.sel && st.sel[1]-st.sel[0]>1){
     const [i,j]=st.sel;
     const yrs=(D.ages[j]-D.ages[i]);
@@ -470,21 +541,21 @@ function updateInfo(){
     const cagr=D.vals[i]>0?(Math.pow(D.vals[j]/D.vals[i],1/yrs)-1):null;
     el.innerHTML='<b>Период '+fmtAge(D.ages[i])+' → '+fmtAge(D.ages[j])+'</b> ('+yrs.toFixed(1)+' лет): '+
       (d>=0?'+':'−')+fmtM(Math.abs(d))+' · скорость '+(perYear>=0?'+':'−')+fmt(Math.abs(perYear))+'/год'+
-      (cagr!=null?' · '+(cagr*100).toFixed(1)+'%/год':'');
+      (cagr!=null?' · '+(cagr*100).toFixed(1)+'%/год':'')+' · '+D.unitLabel+'; с учётом взносов и снятий';
   }else if(st.hover!=null){
     const i=st.hover;
     let rate='';
     if(i>=12){
       const d=D.vals[i]-D.vals[i-12];
       const pct=D.vals[i-12]>0?(d/D.vals[i-12]*100):null;
-      rate=' · рост за посл. год '+(d>=0?'+':'−')+fmt(Math.abs(d))+(pct!=null?' ('+(pct>=0?'+':'')+pct.toFixed(1)+'%)':'');
+      rate=' · изменение баланса за год '+(d>=0?'+':'−')+fmt(Math.abs(d))+(pct!=null?' ('+(pct>=0?'+':'')+pct.toFixed(1)+'%)':'');
     }
     let when=fmtAge(D.ages[i]);
     if(D.startDate){
       const d=new Date(D.startDate); d.setMonth(d.getMonth()+i);
       when=d.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})+' ('+when+')';
     }
-    el.innerHTML='<b>'+when+'</b>: '+fmtM(D.vals[i])+rate;
+    el.innerHTML='<b>'+when+'</b>: '+fmtM(D.vals[i])+rate+' · '+D.unitLabel+'; с учётом взносов и снятий';
   }else{
     el.textContent=dflt;
   }
@@ -594,14 +665,8 @@ $('mA').onclick=()=>setMode('A');
 $('mB').onclick=()=>setMode('B');
 $('mC').onclick=()=>setMode('C');
 
-['ageNow','ageRet','startCap','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge','precise','birthDate','startDate'].forEach(id=>{
+['ageNow','ageRet','startCap','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge','precise','birthDate','startDate','inflation','indexContributions','chartUnits'].forEach(id=>{
   $(id).addEventListener('input',render);
-});
-// возраст обнуления и «работаю до» не могут быть раньше пенсии
-$('ageRet').addEventListener('input',()=>{
-  $('zeroAge').min=+$('ageRet').value+1;
-  $('workAge').min=+$('ageRet').value+1;
-  if(+$('workAge').value<=+$('ageRet').value) $('workAge').value=+$('ageRet').value+1;
 });
 render();
 </script>
