@@ -746,8 +746,8 @@ function updateInfo(){
     el.innerHTML='<b>Период '+fmtAge(D.ages[i])+' → '+fmtAge(D.ages[j])+'</b> ('+yrs.toFixed(1)+' лет): '+
       (d>=0?'+':'−')+fmtM(Math.abs(d))+' · скорость '+(perYear>=0?'+':'−')+fmt(Math.abs(perYear))+'/год'+
       (cagr!=null?' · '+(cagr*100).toFixed(1)+'%/год':'')+' · '+D.unitLabel+'; с учётом взносов и снятий';
-  }else if(st.hover!=null){
-    const i=st.hover;
+  }else if(st.hover!=null || st.selectedMonth!=null){
+    const i=st.hover!=null?st.hover:st.selectedMonth;
     let rate='';
     if(i>=12){
       const d=D.vals[i]-D.vals[i-12];
@@ -802,11 +802,20 @@ function updateInfo(){
       drawChart(); updateInfo();
       return;
     }
+    const rect=cv.getBoundingClientRect(),bounds=chartState._m;
+    if(!bounds)return;
+    const x=e.clientX-rect.left,y=e.clientY-rect.top;
+    // Подписи осей и поля canvas не меняют последнюю точку графика.
+    if(chartState.drag==null && (x<bounds.padL || x>bounds.padL+bounds.pw || y<bounds.padT || y>bounds.padT+bounds.ph))return;
     const i=idxAt(e.clientX);
     if(chartState.drag!=null && i!=null){
       chartState.sel=[Math.min(chartState.drag,i),Math.max(chartState.drag,i)];
     }
     chartState.hover=i;
+    if(i!=null){
+      chartState.selectedMonth=chartState.sel?chartState.sel[1]:i;
+      $('chartMonth').value=chartState.selectedMonth;
+    }
     drawChart(); updateInfo();
   });
   cv.addEventListener('mouseleave',()=>{
