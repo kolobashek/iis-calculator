@@ -51,10 +51,13 @@
   .field label{display:flex; justify-content:space-between; font-size:13px; color:var(--muted); margin-bottom:6px;}
   .field label b{color:var(--text); font-weight:600;}
   input[type=range]{width:100%; accent-color:var(--accent);}
-  input[type=number]{width:100%; background:var(--card2); border:1px solid #2a4a75; border-radius:8px; color:var(--text); padding:8px 10px; font-size:15px;}
+  input[type=number],.money-input{width:100%; background:var(--card2); border:1px solid #2a4a75; border-radius:8px; color:var(--text); padding:8px 10px; font-size:15px;}
   select{width:100%; background:var(--card2); border:1px solid #2a4a75; border-radius:8px; color:var(--text); padding:8px 10px; font-size:14px;}
   .toggle{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); cursor:pointer;}
   .toggle input{accent-color:var(--accent); width:16px; height:16px;}
+  a{color:var(--accent2);}
+  input:disabled,select:disabled{opacity:.5;}
+  .tax-note{border-left:3px solid #fb923c; padding-left:10px;}
   .results{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:20px;}
   .res{background:var(--card2); border-radius:12px; padding:14px 16px;}
   .res .lbl{font-size:12px; color:var(--muted); margin-bottom:4px;}
@@ -76,10 +79,43 @@
 </head>
 <body>
 <h1>Калькулятор ИИС: накопление и пенсия</h1>
-<div class="sub">Фаза 1 — копим и реинвестируем налоговые вычеты. Фаза 2 — живём на накопленное.</div>
+<div class="sub">Копим на ИИС-3 или брокерском счёте, затем живём на накопленное. Учитываем налоги и инфляцию.</div>
 
 <div class="grid">
   <div>
+    <section class="card" style="margin-bottom:20px;" aria-labelledby="taxTitle">
+      <h2 id="taxTitle">Счёт и налоги</h2>
+      <div class="field">
+        <label for="accountType">Счёт для накопления</label>
+        <select id="accountType"><option value="iis3">ИИС-3 (условия льгот выполнены)</option><option value="broker">Брокерский счёт</option></select>
+      </div>
+      <label class="toggle"><input type="checkbox" id="incomeTaxes" checked> Учитывать налог на инвестиционный доход</label>
+      <div class="hint">Включено: вводите доходность до налогов. Отключено: налог не вычитается — можно ввести уже чистую доходность.</div>
+      <div id="incomeTaxFields" style="margin-top:16px;">
+        <div class="field">
+          <label for="incomeTaxAcc">Сценарная ставка налога: накопление</label>
+          <select id="incomeTaxAcc"><option value="0.13">13%</option><option value="0.15">15%</option></select>
+        </div>
+        <div class="field" id="iisDividendField">
+          <label for="dividendShare">Доля дивидендов в доходе ИИС, %</label>
+          <input type="number" id="dividendShare" min="0" max="100" step="5" value="25">
+          <div class="hint">25% — пример, не данные вашего портфеля. При доходности 12% это примерно 3% от капитала в виде дивидендов. Остальной доход учитывается в льготе при закрытии.</div>
+        </div>
+        <div class="field">
+          <label for="incomeTaxPension">Сценарная ставка налога: пенсия</label>
+          <select id="incomeTaxPension"><option value="0.13">13%</option><option value="0.15">15%</option></select>
+        </div>
+      </div>
+      <div class="hint tax-note" id="accountTaxHint"></div>
+      <details style="margin-top:12px;">
+        <summary class="hint">Как считаются налоги</summary>
+        <div class="hint">Упрощённый сценарий для налогового резидента РФ. На брокерском счёте весь положительный доход условно реализуется и облагается ежемесячно; на ИИС-3 ежемесячно облагается только заданная доля дивидендов. Собственные взносы и возврат НДФЛ не облагаются.</div>
+        <div class="hint">Ставка 13% или 15% применяется ко всему облагаемому доходу в сценарии. Реальная шкала — 13% до 2,4 млн ₽ соответствующей годовой базы и 15% на превышение; автоматического расчёта прогрессии и других ваших доходов здесь нет.</div>
+        <div class="hint">Для ИИС-3 предполагается право на льготы, включая минимальный срок владения. Счёт закрывается перед пенсией: положительный результат без дивидендов сверх 30 млн ₽ облагается выбранной ставкой. Лимит общий для ИИС, закрытых в одном году. На пенсии используется обычный брокерский счёт, новых вычетов со взносов нет.</div>
+        <div class="hint">Отсрочка налога до продажи на брокерском счёте, льгота долгосрочного владения, убытки, досрочное закрытие ИИС, прошлый доход внутри стартового капитала и иностранные удержания не моделируются. Это оценка влияния налогов, не расчёт декларации.</div>
+        <div class="hint"><a href="https://www.nalog.gov.ru/rn21/promo/new2025/" target="_blank" rel="noopener noreferrer">Ставки НДФЛ — ФНС</a> · <a href="https://school.moex.com/articles/iis-v-2026-godu-usloviya-nalogovye-vychety-sroki-i-ogranicheniya" target="_blank" rel="noopener noreferrer">Условия ИИС-3 — Московская биржа</a></div>
+      </details>
+    </section>
     <div class="card">
       <h2>Фаза накопления</h2>
       <div class="field">
@@ -104,26 +140,29 @@
       </div>
       <div class="field">
         <label>Стартовый капитал, ₽</label>
-        <input type="number" id="startCap" value="0" step="10000" min="0">
+        <input type="text" inputmode="decimal" id="startCap" value="0" class="money-input" autocomplete="off">
       </div>
       <div class="field">
         <label>Взнос в месяц, ₽</label>
-        <input type="number" id="monthly" value="17000" step="1000" min="0">
+        <input type="text" inputmode="decimal" id="monthly" value="17000" class="money-input" autocomplete="off">
       </div>
       <div class="field">
-        <label>Доходность до инфляции <b id="retV"></b></label>
+        <label><span id="returnLabel">Доходность до налогов и инфляции</span> <b id="retV"></b></label>
         <input type="range" id="ret" min="1" max="25" value="10" step="0.5">
       </div>
-      <div class="field">
+      <div id="refundFields"><div class="field">
         <label>Ставка НДФЛ (вычет)</label>
         <select id="tax">
           <option value="0.13" selected>13%</option>
           <option value="0.15">15%</option>
+          <option value="0.18">18%</option>
+          <option value="0.20">20%</option>
+          <option value="0.22">22%</option>
           <option value="0">без вычета</option>
         </select>
       </div>
       <label class="toggle"><input type="checkbox" id="reinvest" checked> Реинвестировать вычеты на счёт</label>
-      <div class="hint">Вычет считается с взносов до 400 000 ₽/год и возвращается в начале следующего года.</div>
+      <div class="hint">Вычет считается с взносов до 400 000 ₽/год и возвращается в начале следующего года. Предполагается достаточный уплаченный НДФЛ и неиспользованный другими продуктами общий лимит; выбранная ставка применяется ко всей сумме вычета.</div></div>
     </div>
 
     <div class="card" style="margin-top:20px;">
@@ -146,14 +185,14 @@
       </div>
       <div class="field" id="fWithdraw">
         <label for="withdraw">Снимаю в месяц, в сегодняшних ₽</label>
-        <input type="number" id="withdraw" value="80000" step="5000" min="0">
+        <input type="text" inputmode="decimal" id="withdraw" value="80000" class="money-input" autocomplete="off">
       </div>
       <div class="field" id="fZeroAge" style="display:none;">
         <label>Обнулить счёт к возрасту <b id="zeroAgeV"></b></label>
         <input type="range" id="zeroAge" min="55" max="100" value="85">
       </div>
       <div class="field">
-        <label>Доходность на пенсии до инфляции <b id="retPV"></b></label>
+        <label><span id="pensionReturnLabel">Доходность до налогов и инфляции</span> <b id="retPV"></b></label>
         <input type="range" id="retP" min="1" max="20" value="8" step="0.5">
       </div>
       <label class="toggle" style="margin-bottom:10px;"><input type="checkbox" id="workOn"> Продолжаю работать на пенсии</label>
@@ -161,7 +200,7 @@
         <label>Работаю до <b id="workAgeV"></b></label>
         <input type="range" id="workAge" min="51" max="80" value="60">
       </div>
-      <div class="hint" id="workHint" style="display:none;">Пока работаете: взносы и налоговые вычеты продолжают поступать на счёт параллельно со снятиями.</div>
+      <div class="hint" id="workHint" style="display:none;">Пока работаете: взносы продолжаются на обычный брокерский счёт параллельно со снятиями, без новых вычетов ИИС.</div>
       <div class="hint">На пенсии обычно уходят в более консервативный портфель — доходность ниже.</div>
     </div>
   </div>
@@ -176,7 +215,7 @@
     <section class="card" id="rateComparison" aria-labelledby="rateComparisonTitle" style="margin-top:20px;">
       <h2 id="rateComparisonTitle">Доходность против инфляции</h2>
       <div class="rate-panels" id="ratePanels"></div>
-      <div class="hint">Обе полосы показывают годовые ставки на одинаковой шкале 0–25%. Разница ставок указана в процентных пунктах. Изменение покупательной способности рассчитано как (1 + доходность) / (1 + инфляция) − 1. Пополнения и налоговые вычеты в доходность не включены.</div>
+      <div class="hint">Ставки показаны на общей шкале 0–25%. С инфляцией сравнивается доходность после текущих налогов. Разовый налог при закрытии ИИС учтён отдельно в капитале. Пополнения и вычеты не включены в доходность.</div>
     </section>
     <div class="chart-wrap">
       <div class="field">
@@ -187,7 +226,7 @@
       <div class="chart-legend" aria-label="Состав капитала">
         <span data-chart-line="own"><i class="swatch" style="background:#60a5fa;"></i>Собственные деньги</span>
         <span data-chart-line="refunds"><i class="swatch" style="background:#c4b5fd;"></i>Налоговые вычеты</span>
-        <span data-chart-line="total"><i class="swatch" style="background:#2dd4bf;"></i>Проценты / доход</span>
+        <span data-chart-line="total"><i class="swatch" style="background:#2dd4bf;"></i>Доход после налога сценария</span>
         <span id="lossLegend" data-chart-line="nominal"><i class="swatch loss-swatch"></i>Съедает инфляция</span>
       </div>
       <div class="chart-toolbar">
@@ -217,7 +256,7 @@
   </div>
 </div>
 
-<footer>Расчёты приблизительные: доходность и инфляция постоянны, рыночные колебания и комиссии не моделируются. Сумма в ценах начала расчёта = будущая сумма / (1 + инфляция)<sup>число лет</sup>. Налоговая модель упрощена: лимит взносов для вычета не индексируется, НДФЛ при снятии не учитывается. Это сценарий, а не гарантия дохода.</footer>
+<footer>Расчёты приблизительные: доходность и инфляция постоянны, рыночные колебания и комиссии не моделируются. Сумма в ценах начала расчёта = будущая сумма / (1 + инфляция)<sup>число лет</sup>. Налоги считаются по допущениям блока «Счёт и налоги», лимиты не индексируются. Пенсионная выплата — сумма на расходы после налогов сценария. Правила проверены 12.10.2026 и могут измениться. Это сценарий, а не гарантия дохода.</footer>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -233,7 +272,39 @@ const fmtM=n=>{
 
 let mode='A';
 
+function parseMoney(value){
+  const number=Number(String(value).replace(/[\s\u00a0\u202f₽]/g,'').replace(',','.'));
+  return Number.isFinite(number)?Math.max(0,number):0;
+}
+function formatMoneyInput(value){
+  const raw=String(value).replace(/[\s\u00a0\u202f₽]/g,'');
+  if(raw.startsWith('-')) return '0';
+  const cleaned=raw.replace(/[^0-9.,]/g,'');
+  if(!cleaned) return '';
+  const [integer,...fraction]=cleaned.split(/[.,]/);
+  const grouped=(integer||'0').replace(/^0+(?=\d)/,'').replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+  return grouped+(fraction.length?','+fraction.join('').slice(0,2):'');
+}
+function formatMoneyField(input){
+  const caret=input.selectionStart??input.value.length;
+  const before=input.value.slice(0,caret).replace(/[^0-9.,]/g,'').length;
+  const formatted=formatMoneyInput(input.value);
+  if(input.value===formatted) return;
+  input.value=formatted;
+  let position=0,seen=0;
+  while(position<formatted.length&&seen<before){if(/[0-9,]/.test(formatted[position]))seen++;position++;}
+  input.setSelectionRange(position,position);
+}
+
 function monthlyRate(annual){ return Math.pow(1+annual,1/12)-1; }
+function incomeTaxFraction(options={}){
+  return Math.max(0,Math.min(1,options.incomeTaxRate||0))*Math.max(0,Math.min(1,options.taxableShare??1));
+}
+function netAnnualReturn(annual,options={}){
+  const monthly=monthlyRate(annual);
+  if(!incomeTaxFraction(options)||monthly<=0) return annual;
+  return Math.pow(1+monthly-Math.max(0,monthly)*incomeTaxFraction(options),12)-1;
+}
 function priceFactor(inflation, months){ return Math.pow(1+inflation,months/12); }
 function contributionAt(monthly, inflation, months, indexed){
   return monthly*(indexed?Math.pow(1+inflation,Math.floor(months/12)):1);
@@ -245,6 +316,8 @@ function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, 
   const {inflation=0, indexContributions=false}=options;
   const m=monthlyRate(annual);
   let bal=startCap||0, contrib=0, refunds=0, curYear=0;
+  let taxes=0, realTaxes=0, deferredIncome=0;
+  const taxSeries=[0], realTaxSeries=[0];
   const series=[bal];
   const components={own:[bal],refunds:[0],interest:[0]};
   for(let i=0;i<nMonths;i++){
@@ -257,14 +330,33 @@ function accumulate(nMonths, startMonthIdx, monthly, annual, taxRate, reinvest, 
       curYear=0;
     }
     const payment=contributionAt(monthly,inflation,i,indexContributions);
-    bal=(bal+payment)*(1+m);
+    const grossIncome=(bal+payment)*m;
+    const incomeTax=Math.max(0,grossIncome)*incomeTaxFraction(options);
+    taxes+=incomeTax;
+    realTaxes+=incomeTax/priceFactor(inflation,i+1);
+    if(options.iis3) deferredIncome+=grossIncome*(1-(options.taxableShare??1));
+    bal+=payment+grossIncome-incomeTax;
     contrib+=payment; curYear+=payment;
     series.push(bal);
+    taxSeries.push(taxes); realTaxSeries.push(realTaxes);
     components.own.push((startCap||0)+contrib);
     components.refunds.push(refunds);
     components.interest.push(Math.max(0,bal-(startCap||0)-contrib-refunds));
   }
-  return {bal, contrib, refunds, series, carry:curYear,components};
+  return {bal, contrib, refunds, series, carry:curYear,components,taxes,realTaxes,taxSeries,realTaxSeries,deferredIncome,closingTax:0};
+}
+
+// ИИС закрывается и весь результат реализуется до первой пенсионной выплаты.
+// Дивиденды уже обложены отдельно и не расходуют лимит льготы.
+function closeIis(acc,incomeTaxRate,inflation=0,exemption=30000000){
+  const tax=Math.max(0,acc.deferredIncome-exemption)*incomeTaxRate;
+  const last=acc.series.length-1;
+  acc.closingTax=tax;
+  acc.bal-=tax; acc.series[last]=acc.bal;
+  acc.components.interest[last]-=tax;
+  acc.taxes+=tax; acc.realTaxes+=tax/priceFactor(inflation,last);
+  acc.taxSeries[last]=acc.taxes; acc.realTaxSeries[last]=acc.realTaxes;
+  return acc;
 }
 
 // Универсальный симулятор пенсии (помесячно, календарный).
@@ -277,6 +369,8 @@ function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths,
   const {inflation=0, elapsedMonths=0, indexContributions=false}=options;
   const m=monthlyRate(annual);
   let b=bal, zeroAt=-1, balAtWorkEnd=bal, curYear=carry||0;
+  let taxes=0,realTaxes=0;
+  const taxSeries=[0],realTaxSeries=[0];
   const series=[bal];
   // Разбивка включается только для отображаемой симуляции, не для поиска выплаты.
   const parts=options.initialComponents?{...options.initialComponents}:null;
@@ -295,10 +389,13 @@ function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths,
       const working=i<=workMonths;
       const payment=working?contributionAt(monthly,inflation,elapsedMonths+i-1,indexContributions):0;
       const withdrawal=W*priceFactor(inflation,elapsedMonths+i);
-      const earned=b*m;
+      const grossIncome=b*m;
+      const incomeTax=Math.max(0,grossIncome)*incomeTaxFraction(options);
+      taxes+=incomeTax; realTaxes+=incomeTax/priceFactor(inflation,elapsedMonths+i);
+      const earned=grossIncome-incomeTax;
       const beforeWithdrawal=b+earned+payment;
-      b=b*(1+m)+payment-withdrawal;
-      if(working) curYear+=payment;
+      b=beforeWithdrawal-withdrawal;
+      if(working && options.refundsOnWork!==false) curYear+=payment;
       if(b<0 || (b<=1e-7 && withdrawal>0)){zeroAt=i; b=0;}
       if(parts){
         parts.own+=payment;
@@ -311,20 +408,21 @@ function simPension(bal, W, annual, monthly, taxRate, workMonths, horizonMonths,
     }
     if(i===workMonths) balAtWorkEnd=b;
     series.push(b);
+    taxSeries.push(taxes); realTaxSeries.push(realTaxes);
     if(parts){
       components.own.push(parts.own);
       components.refunds.push(parts.refunds);
       components.interest.push(parts.interest);
     }
   }
-  return {end:b, series, zeroAt, balAtWorkEnd,components};
+  return {end:b, series, zeroAt, balAtWorkEnd,components,taxes,realTaxes,taxSeries,realTaxSeries};
 }
 
 // После завершения работы и последнего январского вычета реальный капитал
 // должен покрывать выплаты реальным доходом бессрочно, а не только до 100 лет.
 function solvePerpetual(bal, annual, monthly, taxRate, workMonths, horizonMonths, startMonthIdx, carry, options={}){
   const {inflation=0, elapsedMonths=0}=options;
-  const realMonthly=monthlyRate((1+annual)/(1+inflation)-1);
+  const realMonthly=monthlyRate((1+netAnnualReturn(annual,options))/(1+inflation)-1);
   if(realMonthly<=0) return 0;
   const tail=Math.max(workMonths,0)+13;
   const sustainable=W=>{
@@ -368,16 +466,17 @@ function buildChartMetrics(nominal,components,inflation,realUnits){
   };
 }
 
-function renderRateComparison(ret,retP,inflation){
+function renderRateComparison(ret,retP,inflation,accTax={},pensionTax={}){
   const percent=n=>(n*100).toLocaleString('ru-RU',{maximumFractionDigits:2})+'%';
-  $('ratePanels').innerHTML=[['Накопление',ret],['Пенсия',retP]].map(([phase,annual])=>{
+  $('ratePanels').innerHTML=[['Накопление',ret,accTax],['Пенсия',retP,pensionTax]].map(([phase,gross,taxOptions])=>{
+    const annual=netAnnualReturn(gross,taxOptions);
     const difference=annual-inflation;
     const real=(1+annual)/(1+inflation)-1;
     const state=Math.abs(difference)<1e-10?'neutral':difference>0?'positive':'negative';
     const gap=(Math.abs(difference)*100).toLocaleString('ru-RU',{maximumFractionDigits:2});
     const verdict=state==='neutral'?'Доходность равна инфляции':state==='positive'?'Доходность выше инфляции на '+gap+' п. п.':'Инфляция выше доходности на '+gap+' п. п.';
     const realLabel=state==='neutral'?'Покупательная способность не меняется':state==='positive'?'Покупательная способность растёт':'Покупательная способность падает';
-    const rows=[['Доходность',annual,'#2dd4bf'],['Инфляция',inflation,'#f87171']].map(([label,value,color])=>
+    const rows=[['Введённая доходность',gross,'#60a5fa'],['После текущих налогов сценария',annual,'#2dd4bf'],['Инфляция',inflation,'#f87171']].map(([label,value,color])=>
       '<div class="rate-row"><div class="rate-label"><span>'+label+'</span><b>'+percent(value)+' в год</b></div><div class="rate-track" aria-hidden="true"><div class="rate-bar" style="width:'+(value/.25*100)+'%;background:'+color+'"></div></div></div>'
     ).join('');
     return '<article class="rate-panel" data-state="'+state+'"><h3>'+phase+'</h3>'+rows+
@@ -389,13 +488,23 @@ function renderRateComparison(ret,retP,inflation){
 function render(){
   cancelLineDwell();
   const ageNow=+$('ageNow').value, ageRet=+$('ageRet').value;
-  const monthly=Math.max(0,+$('monthly').value||0);
+  const monthly=parseMoney($('monthly').value);
   const ret=+$('ret').value/100, retP=+$('retP').value/100;
   const inflation=+$('inflation').value/100;
   const indexContributions=$('indexContributions').checked;
-  const taxRate=+$('tax').value;
-  const reinvest=$('reinvest').checked;
-  const W=Math.max(0,+$('withdraw').value||0);
+  const iis3=$('accountType').value==='iis3';
+  const includeTaxes=$('incomeTaxes').checked;
+  const taxRate=iis3?+$('tax').value:0;
+  const reinvest=iis3&&$('reinvest').checked;
+  const accTax={iis3,incomeTaxRate:includeTaxes?+$('incomeTaxAcc').value:0,taxableShare:iis3?Math.max(0,Math.min(100,+$('dividendShare').value||0))/100:1};
+  const pensionTax={incomeTaxRate:includeTaxes?+$('incomeTaxPension').value:0,taxableShare:1};
+  $('refundFields').hidden=!iis3;
+  $('tax').disabled=!iis3; $('reinvest').disabled=!iis3;
+  $('incomeTaxFields').hidden=!includeTaxes;
+  $('iisDividendField').hidden=!iis3;
+  $('returnLabel').textContent=$('pensionReturnLabel').textContent=includeTaxes?'Доходность до налогов и инфляции':'Доходность до инфляции';
+  $('accountTaxHint').textContent=(iis3?'ИИС-3: льготы считаются действующими, срок владения и право на них нужно проверить. Перед пенсией счёт закрывается; далее — обычный брокерский счёт.':'Брокерский счёт: вычетов со взносов нет. Весь доход условно реализуется каждый месяц, поэтому отсрочка налога при долгом удержании бумаг здесь не учитывается.')+(includeTaxes?'':' Налог на доход отключён.');
+  const W=parseMoney($('withdraw').value);
   $('zeroAge').min=ageRet+1;
   $('workAge').min=ageRet+1;
   if(+$('zeroAge').value<=ageRet) $('zeroAge').value=ageRet+1;
@@ -414,7 +523,7 @@ function render(){
   $('fWorkAge').style.display=workOn?'':'none';
   $('workHint').style.display=workOn?'':'none';
 
-  const startCap=Math.max(0,+$('startCap').value||0);
+  const startCap=parseMoney($('startCap').value);
   const precise=$('precise').checked;
   $('fPrecise').style.display=precise?'':'none';
   let ageStart=ageNow, monthsAcc=Math.max(ageRet-ageNow,0)*12, startDateObj=new Date();
@@ -432,22 +541,25 @@ function render(){
   }
   const years=Math.round(monthsAcc/12*10)/10;
   const pensionAge=ageStart+monthsAcc/12;
-  const acc=accumulate(monthsAcc, startMonthIdx, monthly, ret, taxRate, reinvest, startCap,{inflation,indexContributions});
+  const acc=accumulate(monthsAcc, startMonthIdx, monthly, ret, taxRate, reinvest, startCap,{inflation,indexContributions,...accTax});
+  if(iis3&&includeTaxes) closeIis(acc,accTax.incomeTaxRate,inflation);
   const factor=priceFactor(inflation,monthsAcc);
   const baseLabel=precise?'в ценах '+startDateObj.toLocaleDateString('ru-RU'):'в сегодняшних рублях';
   document.querySelector('label[for="withdraw"]').textContent='Снимаю в месяц, '+baseLabel;
-  const realReturn=(1+ret)/(1+inflation)-1;
-  const realPensionReturn=(1+retP)/(1+inflation)-1;
-  renderRateComparison(ret,retP,inflation);
+  const realReturn=(1+netAnnualReturn(ret,accTax))/(1+inflation)-1;
+  const realPensionReturn=(1+netAnnualReturn(retP,pensionTax))/(1+inflation)-1;
+  renderRateComparison(ret,retP,inflation,accTax,pensionTax);
   const pct=n=>(n*100).toLocaleString('ru-RU',{maximumFractionDigits:2})+'%';
 
   const res=[];
-  res.push({lbl:'Капитал к '+fmtAge(pensionAge), val:fmtM(acc.bal), cls:'big',note:'Будущие рубли на счёте'});
+  res.push({lbl:'Капитал к '+fmtAge(pensionAge), val:fmtM(acc.bal), cls:'big',note:includeTaxes?'Будущие рубли после налогов сценария':'Налог дополнительно не вычтен'});
   res.push({lbl:'Покупательная способность капитала',val:fmtM(acc.bal/factor),cls:'big',note:baseLabel+' · цены вырастут в '+factor.toLocaleString('ru-RU',{maximumFractionDigits:2})+' раза'});
   res.push({lbl:'Свои взносы за '+years+' лет'+(startCap>0?' + старт':''), val:fmtM(acc.contrib+startCap),note:'Сумма фактических взносов без пересчёта цен'});
   res.push({lbl:'Реинвестировано вычетов', val:fmtM(acc.refunds),note:'Номинальная сумма поступлений'});
-  res.push({lbl:'Доход от инвестиций до инфляции', val:fmtM(acc.bal-acc.contrib-acc.refunds-startCap), cls:'ok'});
-  res.push({lbl:'Доходность после инфляции',val:pct(realReturn)+' / '+pct(realPensionReturn),cls:realReturn<0||realPensionReturn<0?'warn':'ok',note:'Накопление / пенсия, годовых'});
+  res.push({lbl:'Доход после налогов сценария, до инфляции', val:fmtM(acc.bal-acc.contrib-acc.refunds-startCap), cls:'ok'});
+  res.push({lbl:'Налоги за накопление',val:fmtM(acc.taxes),note:includeTaxes?'Номинальная сумма удержаний, уже вычтена из капитала':'Учёт налога отключён'});
+  if(iis3&&includeTaxes)res.push({lbl:'Из них при закрытии ИИС-3',val:fmtM(acc.closingTax),note:'С результата сверх льготы 30 млн ₽, без дивидендов'});
+  res.push({lbl:'Доходность после текущих налогов и инфляции',val:pct(realReturn)+' / '+pct(realPensionReturn),cls:realReturn<0||realPensionReturn<0?'warn':'ok',note:'Накопление / пенсия, годовых. Разовый налог при закрытии — отдельно'});
 
   const effTax=reinvest?taxRate:0;
   const workMonths=workOn?Math.max(Math.round((workAge-pensionAge)*12),0):0;
@@ -456,7 +568,7 @@ function render(){
   const carry=(reinvest&&monthsAcc>0)?acc.carry:0;
   const horizon=Math.max(Math.round((100-pensionAge)*12),12);
   const workTxt=workOn?' (работаю до '+workAge+')':'';
-  const pensionOptions={inflation,indexContributions,elapsedMonths:monthsAcc};
+  const pensionOptions={inflation,indexContributions,elapsedMonths:monthsAcc,refundsOnWork:false,...pensionTax};
   const displayOptions={...pensionOptions,initialComponents:Object.fromEntries(
     Object.entries(acc.components).map(([key,values])=>[key,values[values.length-1]])
   )};
@@ -497,16 +609,16 @@ function render(){
     pensionSeries=pensionSimulation.series;
     summary='Выплата '+fmt(W2)+'/мес '+baseLabel+' растёт вместе с ценами и расходует капитал к концу выбранного периода. Для сравнения: бессрочная выплата — '+fmt(perp)+'/мес в тех же ценах.';
   }
-  res.push({lbl:'Первая выплата в будущих рублях',val:fmt(payout*priceFactor(inflation,monthsAcc+1))+'/мес',note:'Далее растёт ежемесячно с инфляцией'});
+  res.push({lbl:'Первая выплата на расходы',val:fmt(payout*priceFactor(inflation,monthsAcc+1))+'/мес',note:'Будущие рубли после налогов сценария, далее — индексация'});
   if(realPensionReturn<=0){
     if(mode==='B') summary='Положительная бессрочная выплата с сохранением покупательной способности капитала невозможна. ';
-    summary+=' Доходность на пенсии '+(realPensionReturn<0?'ниже инфляции: после завершения пополнений покупательная способность капитала падает даже без снятий.':'равна инфляции: положительная бессрочная выплата без расходования капитала невозможна.');
+    summary+=' Доходность на пенсии после текущих налогов '+(realPensionReturn<0?'ниже инфляции: после завершения пополнений покупательная способность капитала падает даже без снятий.':'равна инфляции: положительная бессрочная выплата без расходования капитала невозможна.');
   }
 
   $('results').innerHTML=res.map(r=>
     '<div class="res"><div class="lbl">'+r.lbl+'</div><div class="val '+(r.cls||'')+'">'+r.val+'</div>'+(r.note?'<div class="note">'+r.note+'</div>':'')+'</div>'
   ).join('');
-  $('summary').textContent=summary;
+  $('summary').textContent=summary+(includeTaxes?' Налог на доход учтён по выбранному сценарию; выплаты указаны на расходы.':' Налог на доход отключён: дополнительного удержания нет.');
 
   // График: помесячные данные, зум и прицел
   const ages=[], vals=[];
@@ -521,7 +633,9 @@ function render(){
   const componentSeries=Object.fromEntries(Object.entries(acc.components).map(([key,values])=>
     [key,values.concat(pensionSimulation.components[key].slice(1))]));
   const metrics=buildChartMetrics(vals,componentSeries,inflation,realUnits);
-  CS.data={ages,...metrics,showLoss,ceiling:showLoss?metrics.nominal:metrics.vals,splitIdx:acc.series.length-1,startDate:startDateObj,unitLabel:realUnits?baseLabel:'в будущих рублях'};
+  const taxSeries=acc.taxSeries.concat(pensionSimulation.taxSeries.slice(1).map(v=>v+acc.taxes));
+  const realTaxSeries=acc.realTaxSeries.concat(pensionSimulation.realTaxSeries.slice(1).map(v=>v+acc.realTaxes));
+  CS.data={ages,...metrics,taxSeries,realTaxSeries,includeTaxes,showLoss,ceiling:showLoss?metrics.nominal:metrics.vals,splitIdx:acc.series.length-1,startDate:startDateObj,unitLabel:realUnits?baseLabel:'в будущих рублях'};
   ['lossLegend','lossExplanation','inflationImpact'].forEach(id=>{$(id).hidden=!showLoss;});
   if(CS.selectedMonth==null) CS.selectedMonth=monthsAcc;
   CS.selectedMonth=Math.min(CS.selectedMonth,vals.length-1);
@@ -618,6 +732,7 @@ function updateBreakdown(){
     {label:'Собственные деньги в остатке',value:fmt(D.components.own[i]),note:share(D.components.own[i]),color:'#60a5fa'},
     {label:'Вычеты в остатке',value:fmt(D.components.refunds[i]),note:share(D.components.refunds[i]),color:'#c4b5fd'},
     {label:'Проценты / доход в остатке',value:fmt(D.components.interest[i]),note:share(D.components.interest[i]),color:'#2dd4bf'},
+    {label:'Налоги удержаны к этой дате',value:fmt(D.taxSeries[i]),note:D.includeTaxes?'Сумма номинальных удержаний вне остатка; в базовых ценах на даты уплаты: '+fmt(D.realTaxSeries[i]):'Учёт налога отключён',color:'#fb923c'},
     {label:'Накопленный рост цен',value:'+'+D.inflationPct[i].toLocaleString('ru-RU',{maximumFractionDigits:1})+'%',note:'С начала расчёта',color:'#fbbf24'},
     {label:'Съедает инфляция',value:fmt(D.inflationGap[i]),note:lossPercent+' от номинала. '+fmt(D.nominal[i])+' → '+fmt(D.real[i])+' в базовых ценах',color:'#f87171'}
   ];
@@ -968,7 +1083,15 @@ $('mA').onclick=()=>setMode('A');
 $('mB').onclick=()=>setMode('B');
 $('mC').onclick=()=>setMode('C');
 
-['ageNow','ageRet','startCap','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge','precise','birthDate','startDate','inflation','indexContributions','chartUnits'].forEach(id=>{
+document.querySelectorAll('.money-input').forEach(input=>{
+  formatMoneyField(input);
+  input.addEventListener('input',()=>formatMoneyField(input));
+  input.addEventListener('blur',()=>{
+    input.value=formatMoneyInput(parseMoney(input.value));
+    render();
+  });
+});
+['ageNow','ageRet','startCap','monthly','ret','tax','reinvest','withdraw','retP','zeroAge','workOn','workAge','precise','birthDate','startDate','inflation','indexContributions','chartUnits','accountType','incomeTaxes','incomeTaxAcc','incomeTaxPension','dividendShare'].forEach(id=>{
   $(id).addEventListener('input',render);
 });
 render();

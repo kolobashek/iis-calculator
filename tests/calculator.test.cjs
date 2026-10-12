@@ -9,6 +9,7 @@ const ctx=vm.createContext({});
 vm.runInContext(script.slice(0,script.indexOf('function render()')),ctx);
 const {priceFactor,monthlyRate,accumulate,simPension,solveAnnuity,solvePerpetual}=ctx;
 const {buildChartMetrics}=ctx;
+const {netAnnualReturn,closeIis}=ctx;
 const close=(actual,expected,tolerance=1e-5)=>assert.ok(Math.abs(actual-expected)<=tolerance,`${actual} != ${expected}`);
 
 test('10% annual inflation compounds by date, not by subtraction',()=>{
@@ -153,4 +154,97 @@ test('zero inflation makes price growth and purchasing-power gap exactly zero',(
   assert.ok(data.inflationPct.every(v=>v===0));
   assert.ok(data.inflationGap.every(v=>v===0));
   data.vals.forEach((v,i)=>close(v,a.series[i]));
+});
+
+test('income tax applies to earnings, never to deposits or contribution refunds',()=>{
+  const opts={incomeTaxRate:.13,taxableShare:1};
+  const flat=accumulate(25,9,40000,0,.13,true,100000,opts);
+  close(flat.taxes,0); close(flat.bal,100000+flat.contrib+flat.refunds);
+  const s=accumulate(1,0,100,1.01**12-1,0,false,1000,opts);
+  close(s.taxes,1.43); close(s.bal,1109.57);
+  close(s.components.own[1],1100); close(s.components.interest[1],9.57);
+});
+
+test('monthly income tax matches an independent compound-growth calculation',()=>{
+  const gross=1.01**12-1,opts={incomeTaxRate:.15,taxableShare:1};
+  const s=accumulate(120,0,0,gross,0,false,100000,opts);
+  close(s.bal,100000*1.0085**120);
+  close(netAnnualReturn(gross,opts),1.0085**12-1);
+  const noTax=accumulate(120,0,0,gross,0,false,100000);
+  assert.ok(noTax.bal-s.bal>s.taxes,'Tax also removes future compounding');
+});
+
+test('IIS dividend share is a share of earnings, and remaining income is deferred',()=>{
+  const s=accumulate(1,0,0,1.01**12-1,0,false,100000,{iis3:true,incomeTaxRate:.13,taxableShare:.25});
+  close(s.taxes,32.5); close(s.deferredIncome,750); close(s.bal,100967.5);
+  closeIis(s,.13); close(s.closingTax,0);
+  const allDividends=accumulate(1,0,0,1.01**12-1,0,false,100000,{iis3:true,incomeTaxRate:.13,taxableShare:1});
+  close(allDividends.deferredIncome,0);
+});
+
+test('IIS closure taxes only result exceeding 30 million, not principal or dividends',()=>{
+  for(const income of [29000000,30000000,31000000]){
+    const s=accumulate(12,0,0,.1,0,false,income/.1,{iis3:true,incomeTaxRate:.13,taxableShare:0});
+    close(s.deferredIncome,income,.00001);
+    closeIis(s,.13,.06);
+    const expected=Math.max(0,income-30000000)*.13;
+    close(s.closingTax,expected,.00001);
+    close(s.bal,income/.1+income-expected,.00001);
+    close(s.taxSeries.at(-1),expected,.00001);
+    close(s.realTaxSeries.at(-1),expected/1.06,.00001);
+    close(s.components.own.at(-1)+s.components.refunds.at(-1)+s.components.interest.at(-1),s.bal);
+  }
+});
+
+test('disabling tax or exempting all earnings preserves gross accumulation',()=>{
+  const args=[180,9,18000,.12,.13,true,36554];
+  const gross=accumulate(...args);
+  for(const opts of [{incomeTaxRate:0},{incomeTaxRate:.15,taxableShare:0}]){
+    const s=accumulate(...args,opts);
+    close(s.bal,gross.bal); close(s.taxes,0);
+  }
+  close(netAnnualReturn(-.1,{incomeTaxRate:.15}),-.1);
+});
+
+test('taxes are discounted at payment dates and accumulate monotonically',()=>{
+  const s=accumulate(24,0,0,.12,0,false,100000,{inflation:.1,incomeTaxRate:.13});
+  let discounted=0;
+  for(let i=1;i<s.taxSeries.length;i++){
+    const payment=s.taxSeries[i]-s.taxSeries[i-1];
+    assert.ok(payment>=0); discounted+=payment/priceFactor(.1,i);
+    close(s.realTaxSeries[i],discounted);
+  }
+  assert.ok(s.realTaxes>s.taxes/1.1**2);
+});
+
+test('pension payout is spendable cash; deposits and withdrawals are not taxed again',()=>{
+  const s=simPension(100000,1000,1.01**12-1,100,0,1,1,0,0,{incomeTaxRate:.13,initialComponents:{own:100000,refunds:0,interest:0}});
+  close(s.taxes,130); close(s.end,99970);
+  close(Object.values(s.components).reduce((sum,series)=>sum+series[1],0),s.end);
+});
+
+test('perpetual and finite pensions agree with closed forms after income tax',()=>{
+  const opts={incomeTaxRate:.13,inflation:.06,elapsedMonths:180},capital=3000000,n=240;
+  const r=(1+monthlyRate(.12)*.87)/(1.06**(1/12))-1;
+  const realCapital=capital/1.06**15;
+  close(solvePerpetual(capital,.12,0,0,0,600,0,0,opts),realCapital*r);
+  close(solveAnnuity(capital,.12,0,0,0,n,0,0,opts),realCapital*r/(1-(1+r)**-n));
+  close(solvePerpetual(capital,.08,0,0,0,600,0,0,{incomeTaxRate:.15,inflation:.075}),0);
+});
+
+test('after IIS closure, last refund arrives once and pension contributions get no deductions',()=>{
+  const s=simPension(100000,0,0,10000,.13,24,25,9,30000,{refundsOnWork:false});
+  close(s.end,100000+240000+3900);
+});
+
+test('tax series and net components stay consistent through pension depletion',()=>{
+  const a=closeIis(accumulate(180,9,18000,.12,.13,true,36554,{iis3:true,incomeTaxRate:.13,taxableShare:.25}),.13);
+  const initialComponents=Object.fromEntries(Object.entries(a.components).map(([k,v])=>[k,v.at(-1)]));
+  const s=simPension(a.bal,80000,.08,0,.13,0,600,9,a.carry,{incomeTaxRate:.15,inflation:.075,elapsedMonths:180,initialComponents,refundsOnWork:false});
+  assert.ok(s.zeroAt>0);
+  for(let i=0;i<s.series.length;i++){
+    close(Object.values(s.components).reduce((sum,values)=>sum+values[i],0),s.series[i]);
+    assert.ok(Number.isFinite(s.taxSeries[i]));
+    if(i>s.zeroAt)close(s.taxSeries[i],s.taxSeries[s.zeroAt]);
+  }
 });
