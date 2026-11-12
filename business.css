@@ -1,0 +1,26 @@
+[hidden]{display:none!important}
+.calculator-tabs{display:flex;gap:8px;margin-bottom:24px;max-width:600px}
+.calculator-tabs button{flex:1;padding:13px 16px;border:1px solid #2a4a75;border-radius:10px;background:var(--card);color:var(--muted);font:inherit;font-size:14px;cursor:pointer}
+.calculator-tabs button[aria-selected=true]{background:#1d3d63;border-color:var(--accent);color:var(--text)}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,.business-table-scroll:focus-visible{outline:2px solid var(--accent2);outline-offset:3px}
+.business-inputs{display:grid;gap:20px;min-width:0}
+#businessPanel .res .val{overflow-wrap:anywhere}
+#businessPanel summary{cursor:pointer;color:var(--text);font-size:14px;line-height:1.5}
+#businessPanel details[open]>summary{margin-bottom:16px}
+#businessPanel .hint{line-height:1.6}
+.business-summary{padding:12px 14px;background:var(--card2);border-left:3px solid var(--accent);border-radius:6px;font-size:14px;line-height:1.7}
+.business-summary[data-state=warning]{border-left-color:var(--danger)}
+.business-heading{font-size:16px;color:var(--text);font-weight:600;margin-bottom:14px}
+#businessChart{width:100%;height:310px;display:block;touch-action:pan-y;cursor:crosshair}
+.business-monthly-row{display:flex;justify-content:space-between;gap:18px;padding:11px 0;border-bottom:1px solid #2a4a75;font-size:14px;line-height:1.5}
+.business-monthly-row span{color:var(--muted)}
+.business-monthly-row strong{white-space:nowrap;font-variant-numeric:tabular-nums}
+.business-monthly-row.total{border-bottom:0;font-size:16px}
+.business-table-scroll{overflow-x:auto;margin-top:16px;max-width:100%}
+.business-table{width:100%;border-collapse:collapse;text-align:right;font-size:12px;font-variant-numeric:tabular-nums}
+.business-table th,.business-table td{padding:10px 12px;border-bottom:1px solid #2a4a75;white-space:nowrap}
+.business-table th{color:var(--muted);font-weight:500}
+.business-table th:first-child,.business-table td:first-child{text-align:left}
+.business-table tr[data-selected=true]{background:var(--card2)}
+.business-assumptions{margin:20px 0}
+@media(max-width:480px){.calculator-tabs button{padding:12px 8px;font-size:13px}.business-monthly-row{font-size:12px;gap:8px}.business-monthly-row.total{font-size:14px}#businessChart{height:280px}}
