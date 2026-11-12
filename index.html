@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Калькулятор ИИС: накопление и пенсия</title>
+<title>Калькуляторы: инвестиции и бизнес</title>
+<link rel="stylesheet" href="business.css">
 <style>
   :root{
     --bg:#0e1a2b; --card:#152a45; --card2:#1b3557; --accent:#2dd4bf; --accent2:#60a5fa;
@@ -78,6 +79,11 @@
 </style>
 </head>
 <body>
+<nav class="calculator-tabs" role="tablist" aria-label="Выбор калькулятора">
+  <button type="button" id="investmentTab" role="tab" aria-selected="true" aria-controls="investmentPanel">Инвестиции и пенсия</button>
+  <button type="button" id="businessTab" role="tab" aria-selected="false" aria-controls="businessPanel" tabindex="-1">Бизнес</button>
+</nav>
+<section id="investmentPanel" role="tabpanel" aria-labelledby="investmentTab">
 <h1>Калькулятор ИИС: накопление и пенсия</h1>
 <div class="sub">Копим на ИИС-3 или брокерском счёте, затем живём на накопленное. Учитываем налоги и инфляцию.</div>
 
@@ -258,6 +264,64 @@
 
 <footer>Расчёты приблизительные: доходность и инфляция постоянны, рыночные колебания и комиссии не моделируются. Сумма в ценах начала расчёта = будущая сумма / (1 + инфляция)<sup>число лет</sup>. Налоги считаются по допущениям блока «Счёт и налоги», лимиты не индексируются. Пенсионная выплата — сумма на расходы после налогов сценария. Правила проверены 12.10.2026 и могут измениться. Это сценарий, а не гарантия дохода.</footer>
 
+</section>
+<section id="businessPanel" role="tabpanel" aria-labelledby="businessTab" hidden>
+  <h1>Доходность и окупаемость бизнеса</h1>
+  <div class="sub">Сколько остаётся после расходов и налогов, сколько денег нужно на запуск и когда вернутся вложения.</div>
+  <div class="grid">
+    <div class="business-inputs">
+      <section class="card">
+        <h2>Запуск и продажи</h2>
+        <div class="field"><label for="bizInvestment">Первоначальные вложения, ₽</label><input id="bizInvestment" class="money-input" type="text" inputmode="decimal" autocomplete="off" value="1000000"><div class="hint">Оборудование, ремонт, первоначальные запасы и другие разовые затраты. Убытки первых месяцев рассчитываются отдельно.</div></div>
+        <div class="field"><label for="bizRevenue">Плановая выручка в месяц, ₽</label><input id="bizRevenue" class="money-input" type="text" inputmode="decimal" autocomplete="off" value="500000"></div>
+        <div class="field"><label for="bizRamp">Выход на плановую выручку, месяцев</label><input id="bizRamp" type="number" min="0" max="120" step="1" value="3"><div class="hint">При 3 месяцах: ⅓ плана в первом, ⅔ во втором, полный план в третьем. 0 — полный план сразу.</div></div>
+        <div class="field"><label for="bizHorizon">Срок расчёта, месяцев</label><input id="bizHorizon" type="number" min="1" max="120" step="1" value="36"></div>
+      </section>
+      <section class="card">
+        <h2>Расходы</h2>
+        <div class="field"><label for="bizVariable">Переменные расходы, % выручки</label><input id="bizVariable" type="number" min="0" max="100" step="1" value="35"><div class="hint">Закупки, сырьё, комиссии, доставка — расходы, растущие вместе с продажами.</div></div>
+        <div class="field"><label for="bizFixed">Постоянные расходы в месяц, ₽</label><input id="bizFixed" class="money-input" type="text" inputmode="decimal" autocomplete="off" value="100000"><div class="hint">Аренда, сотрудники со взносами, реклама, связь и прочие регулярные расходы. Без зарплаты владельца.</div></div>
+        <div class="field"><label for="bizSalary">Оплата труда владельца в месяц, ₽</label><input id="bizSalary" class="money-input" type="text" inputmode="decimal" autocomplete="off" value="50000"><div class="hint">Стоимость вашей работы — отдельно от дохода на вложенный капитал.</div></div>
+        <div class="field"><label for="bizReinvestment">Резерв на обновление в месяц, ₽</label><input id="bizReinvestment" class="money-input" type="text" inputmode="decimal" autocomplete="off" value="10000"><div class="hint">Деньги на оборудование и развитие. Они уменьшают доступный денежный поток, но в этой модели не уменьшают налоговую базу.</div></div>
+      </section>
+      <section class="card">
+        <h2>Налоги и изменение цен</h2>
+        <div class="field"><label for="bizTaxMode">Условная база налога</label><select id="bizTaxMode"><option value="revenue">Выручка</option><option value="profit">Положительная прибыль до налога</option></select></div>
+        <div class="field"><label for="bizTaxRate">Ставка налога, %</label><input id="bizTaxRate" type="number" min="0" max="99" step="0.5" value="6"><div class="hint">6% — пример сценария. Укажите вашу эффективную ставку; 0% отключает налог. Это не автоматический расчёт УСН, НДС или налога на прибыль.</div></div>
+        <details>
+          <summary>Рост выручки, расходов и ставка сравнения</summary>
+          <div class="field"><label for="bizRevenueGrowth">Изменение выручки, % в год</label><input id="bizRevenueGrowth" type="number" min="-99" max="100" step="1" value="0"><div class="hint">Рост цен и объёма продаж вместе. Отрицательное значение — снижение продаж.</div></div>
+          <div class="field"><label for="bizCostGrowth">Рост постоянных расходов, % в год</label><input id="bizCostGrowth" type="number" min="0" max="100" step="1" value="0"><div class="hint">Применяется к постоянным расходам, оплате владельца и резерву. Переменные расходы сохраняют свою долю выручки.</div></div>
+          <div class="field"><label for="bizDiscount">Требуемая доходность, % в год</label><input id="bizDiscount" type="number" min="0" max="100" step="0.5" value="12"><div class="hint">Ставка для приведения будущих денег к сегодняшней стоимости. Например, доходность альтернативного вложения с поправкой на риск; не списание со счёта.</div></div>
+        </details>
+      </section>
+    </div>
+    <div>
+      <section class="card">
+        <h2>Результат сценария</h2>
+        <div id="businessResults" class="results" aria-live="polite"></div>
+        <div id="businessSummary" class="business-summary"></div>
+      </section>
+      <section class="chart-wrap">
+        <h2 class="business-heading">Возврат вложений по месяцам</h2>
+        <div class="chart-legend"><span><i class="swatch" style="background:#2dd4bf"></i>Денежный результат с учётом вложений</span><span><i class="swatch" style="background:#c4b5fd"></i>С учётом требуемой доходности</span></div>
+        <svg id="businessChart" role="img" aria-label="Накопленный денежный поток бизнеса" aria-describedby="businessChartReadout"></svg>
+        <div class="hint">Начинаем с минуса на сумму вложений. Пересечение нуля — возврат вложений. Расчёт предполагает, что свободные деньги направляются на их возврат.</div>
+        <div class="field" style="margin-top:16px"><label for="bizChartMonth">Месяц на графике <b id="bizChartMonthLabel"></b></label><input id="bizChartMonth" type="range" min="0" max="36" step="1" value="0"></div>
+        <div id="businessChartReadout" class="chart-projection" aria-live="polite"></div>
+      </section>
+      <section class="card" style="margin-top:20px">
+        <h2>Месяц на полной выручке</h2>
+        <div class="hint" style="margin-bottom:12px">В начальных ценах, без периода разгона. Это ориентир, а не средний месяц за весь срок.</div>
+        <div id="businessMonthly"></div>
+      </section>
+      <section class="card" style="margin-top:20px">
+        <details><summary>Денежный поток по месяцам</summary><div class="business-table-scroll" tabindex="0" role="region" aria-label="Помесячная таблица, прокручивается горизонтально"><table class="business-table"><thead><tr><th scope="col">Месяц</th><th scope="col">Выручка</th><th scope="col">Налог</th><th scope="col">Свободные деньги</th><th scope="col">Итог с вложениями</th></tr></thead><tbody id="businessTable"></tbody></table></div></details>
+      </section>
+      <div class="hint business-assumptions">Все суммы — в рублях соответствующего месяца. Прибыль здесь — выручка минус переменные и постоянные расходы, оплата труда владельца и условный налог. Денежный поток дополнительно уменьшен на резерв обновления. Предполагается оплата продаж и расходов в том же месяце. Кредиты, амортизация, дебиторская задолженность, продажа бизнеса и возврат резерва в конце не учитываются. ROI считается за весь выбранный срок, не за год. Налоги при выводе денег владельцу нужно учитывать отдельно. Начальные значения — пример, не прогноз.</div>
+    </div>
+  </div>
+</section>
 <script>
 const $=id=>document.getElementById(id);
 const fmt=n=>{
@@ -742,6 +806,7 @@ function updateBreakdown(){
 function drawChart(){
   const st=chartState, D=st.data; if(!D) return;
   const canvas=$('chart');
+  if(!canvas.clientWidth) return;
   const dpr=window.devicePixelRatio||1;
   const W=canvas.clientWidth, H=canvas.clientHeight||320;
   canvas.width=W*dpr; canvas.height=H*dpr;
@@ -1083,7 +1148,7 @@ $('mA').onclick=()=>setMode('A');
 $('mB').onclick=()=>setMode('B');
 $('mC').onclick=()=>setMode('C');
 
-document.querySelectorAll('.money-input').forEach(input=>{
+document.querySelectorAll('#investmentPanel .money-input').forEach(input=>{
   formatMoneyField(input);
   input.addEventListener('input',()=>formatMoneyField(input));
   input.addEventListener('blur',()=>{
@@ -1096,5 +1161,7 @@ document.querySelectorAll('.money-input').forEach(input=>{
 });
 render();
 </script>
+<script src="business-model.js"></script>
+<script src="business.js"></script>
 </body>
 </html>
